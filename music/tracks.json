@@ -1,0 +1,28 @@
+{
+	"tracks": [
+		{
+			"artist": "",
+			"bpm": 76.0,
+			"map": "test_chase.beats.json",
+			"seconds": 12.63,
+			"song": "test_chase.wav",
+			"title": "test chase"
+		},
+		{
+			"artist": "",
+			"bpm": 84.0,
+			"map": "test_lounge.beats.json",
+			"seconds": 22.86,
+			"song": "test_lounge.wav",
+			"title": "test lounge"
+		},
+		{
+			"artist": "",
+			"bpm": 115.9,
+			"map": "test_visitors.beats.json",
+			"seconds": 16.56,
+			"song": "test_visitors.wav",
+			"title": "test visitors"
+		}
+	]
+}

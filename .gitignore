@@ -1,0 +1,7 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+/shots/
+# Blender backups and Python caches
+*.blend1
+__pycache__/
