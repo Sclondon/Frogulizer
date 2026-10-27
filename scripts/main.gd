@@ -1,20 +1,20 @@
 extends Node3D
-## Frogulizer: a music visualiser. A band of frogs plays on the bandstand of a
-## paddle steamer going down an autumn river at sundown, and the crowd on the
-## deck dances. The songs are in music/ (with their beat maps: see
-## tools/analyse_music.sh); everything moves to them.
+## Frogulizer: a music visualiser. A band of frogs plays in the bandstand at the back of a paddle
+## steamer's cabin as it goes down an autumn river at sundown, and the crowd on the stern deck
+## dances. The songs are in music/ (with their beat maps: see tools/analyse_music.sh); everything
+## moves to them.
 ##
-## This puts it all together: the River and the Riverboat, the band on the
-## bandstand (a Frog for each part TrackPlayer reads off the music, and a
-## conductor), the Crowd, the Director's camera and the Hud.
+## This puts it all together: the River and the Riverboat, the band (a Frog for each part
+## TrackPlayer reads off the music, a singer and a conductor), the Crowd, the Director's camera
+## and the Hud. Everyone aboard is a child of the boat, and goes down the river with it.
 
-## Where each of the band stands on the bandstand (x, z), back row then front.
+## Where each of the band stands in the bandstand (x, z on the boat), back row then front. They face aft.
 const PLACES := {
-	"tuba": Vector2(-2.6, -13.3), "drums": Vector2(0.0, -13.6), "accordion": Vector2(2.6, -13.3),
-	"banjo": Vector2(-3.0, -11.7), "clarinet": Vector2(-1.2, -11.4), "trumpet": Vector2(1.2, -11.4), "fiddle": Vector2(3.0, -11.7),
+	"tuba": Vector2(-2.2, 0.35), "drums": Vector2(0.0, 0.45), "accordion": Vector2(2.2, 0.35),
+	"banjo": Vector2(-2.5, -1.1), "clarinet": Vector2(-1.0, -0.9), "trumpet": Vector2(1.0, -0.9), "fiddle": Vector2(2.5, -1.1),
 }
-## How far forward whoever has the tune steps.
-const STEP_FORWARD := 0.7
+## How far forward (aft, to the crowd) whoever has the tune steps.
+const STEP_FORWARD := 0.55
 
 var river: River
 var boat: Riverboat
@@ -24,37 +24,35 @@ var hud: Hud
 var player: TrackPlayer
 var band := {}
 var conductor: Frog
+var singer: Frog
+var pixels: Pixelate
+var desk: CameraDesk
+## Rendering a film (a second Godot started by the camera desk, with Movie Maker): its settings.
+var render := {}
+var _rendered := 0.0
 
 
 func _ready() -> void:
 	# (the world is shaded in the same hard bands as the frogs)
 	Settings.world_banded = true
-	river = River.new()
-	add_child(river)
 	boat = Riverboat.new()
 	add_child(boat)
+	river = River.new()
+	river.boat = boat
+	add_child(river)
 	var k := 0
 	for part: String in PLACES:
-		var frog := Frog.new()
-		frog.look = FrogLook.bandsman(k)
-		frog.part = part
-		frog.droop = 0.15 + 0.07 * (k % 4)
 		var at: Vector2 = PLACES[part]
-		frog.position = Vector3(at.x, Riverboat.STAGE_Y, at.y)
-		frog.add_to_group(&"band")
-		add_child(frog)
-		frog.turn_to(-at.x * 0.07)
-		band[part] = frog
+		band[part] = _aboard(FrogLook.bandsman(k), part, Vector3(at.x, Riverboat.STAGE_Y, at.y), PI + at.x * 0.06)
+		band[part].add_to_group(&"band")
 		k += 1
-	conductor = Frog.new()
-	conductor.look = FrogLook.bandsman(11, true)
-	conductor.part = "conductor"
-	conductor.droop = 0.3
-	conductor.position = Vector3(0.0, Riverboat.STAGE_Y, Riverboat.STAGE_FRONT - 0.7)
-	add_child(conductor)
-	conductor.turn_to(PI)
+	singer = _aboard(FrogLook.singer(4), "singer", Vector3(0.0, Riverboat.STAGE_Y, Riverboat.STAGE_FRONT + 0.45), PI)
+	singer.frog_rig().sings = 1.0
+	conductor = _aboard(FrogLook.bandsman(11, true), "conductor", Vector3(-2.3, Riverboat.DECK_Y, Riverboat.STAGE_FRONT - 1.0), 0.35)
 	crowd = Crowd.new()
+	crowd.boat = boat
 	add_child(crowd)
+	_set_gazes()
 
 	player = TrackPlayer.new()
 	add_child(player)
@@ -68,8 +66,12 @@ func _ready() -> void:
 	director.river = river
 	director.band = band
 	director.conductor = conductor
+	director.singer = singer
 	add_child(director)
 	director.make_current()
+
+	pixels = Pixelate.new()
+	add_child(pixels)
 
 	hud = Hud.new()
 	hud.player = player
@@ -79,6 +81,83 @@ func _ready() -> void:
 	hud.next.connect(player.next)
 	hud.pause.connect(player.toggle_pause)
 	hud.camera.connect(func(mode: String) -> void: director.mode = mode)
+
+	desk = CameraDesk.new()
+	desk.director = director
+	desk.boat = boat
+	desk.player = player
+	desk.frogs = [["The boat", boat], ["The singer", singer], ["The conductor", conductor]]
+	for part: String in band:
+		desk.frogs.append([part.capitalize(), band[part]])
+	for n in crowd.frogs.size():
+		desk.frogs.append(["Dancer %d" % (n + 1), crowd.frogs[n]])
+	add_child(desk)
+	desk.setup()
+	_start_render()
+
+
+func _process(delta: float) -> void:
+	director.crop = desk.frame_rect() if desk and desk.frame_kind != "free" else Rect2()
+	if not render.is_empty():
+		# (counted in frames rendered, which Movie Maker keeps exactly: the music's own clock wanders
+		# when the pictures are slow to make)
+		_rendered += delta
+		if _rendered >= float(render.to) - float(render.get("from", 0.0)) or not player.playing and _rendered > 0.5:
+			get_tree().quit()
+
+
+## With `-- --render <settings.json>` (the camera desk does this): play the song from where it says,
+## with the camera it says, and stop at the end, for Movie Maker to have written it all.
+func _start_render() -> void:
+	var args := OS.get_cmdline_user_args()
+	var at := args.find("--render")
+	if at < 0 or at + 1 >= args.size():
+		return
+	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(args[at + 1]))
+	if not data is Dictionary:
+		return
+	render = data
+	hud.visible = false
+	hud.skip_card()
+	pixels.size = float(render.get("pixels", 1.0))
+	pixels.levels = float(render.get("levels", 0.0))
+	desk.focal = float(render.get("focal", 28.0))
+	match String(render.get("camera", "auto")):
+		"path":
+			desk.load_take(String(render.get("take", "_render")))
+			desk._set_mode("path")
+		"shot":
+			director.mode = String(render.get("shot", "audience"))
+		_:
+			director.mode = "auto"
+	desk.frame_kind = "free"
+	desk._panel.visible = false
+	player.play(int(render.get("song", 0)), float(render.get("from", 0.0)))
+
+
+## Who looks at whom: the crowd at the bandstand (whoever has the tune most of all, or the singer)
+## and at each other; the band at the conductor, each other and the crowd.
+func _set_gazes() -> void:
+	var stage: Array = band.values() + [singer]
+	var lead := func() -> Node3D: return band.get(Groove.lead, singer) if Groove.voice < 0.4 else singer
+	for frog in crowd.frogs:
+		var near: Array = crowd.frogs.filter(func(other: Frog) -> bool: return other != frog and other.position.distance_to(frog.position) < 2.5)
+		frog.frog_rig().look_around = stage + stage + near
+		frog.frog_rig().look_lead = lead
+	for frog: Frog in stage + [conductor]:
+		frog.frog_rig().look_around = [conductor, conductor] + crowd.frogs.slice(0, 8) + stage
+		frog.frog_rig().look_lead = lead
+
+
+func _aboard(look: Dictionary, part: String, at: Vector3, yaw: float) -> Frog:
+	var frog := Frog.new()
+	frog.look = look
+	frog.part = part
+	frog.droop = look.get("droop", 0.25)
+	frog.position = at
+	frog.home_yaw = yaw
+	boat.add_child(frog)
+	return frog
 
 
 func _on_struck(part: String, loud: float) -> void:
@@ -92,8 +171,9 @@ func _on_struck(part: String, loud: float) -> void:
 func _on_phrase(_index: int) -> void:
 	for part: String in band:
 		var frog: Frog = band[part]
-		var leading := part == Groove.lead
-		frog.go_to(frog.home + (Vector3(0.0, 0.0, STEP_FORWARD) if leading and part != "drums" and part != "tuba" else Vector3.ZERO))
+		var leading := part == Groove.lead and part != "drums" and part != "tuba"
+		frog.go_to(frog.home + (Vector3(0.0, 0.0, -STEP_FORWARD) if leading else Vector3.ZERO))
+	crowd.on_phrase()
 	director.on_phrase()
 
 

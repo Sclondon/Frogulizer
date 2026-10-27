@@ -25,5 +25,5 @@ void fragment() {
 	// (a scrub of tufts and stubble so it is not flat colour)
 	float grain = hash(floor(world.xz * 3.0)) * 0.1 + hash(floor(world.xz * 0.7)) * 0.08;
 	float lit = clamp(dot(world_normal, normalize(sun_dir)) * 1.6 + 0.55, 0.0, 1.0);
-	ALBEDO = base * (0.92 + grain) * mix(vec3(0.55, 0.5, 0.58), sun_color * 1.05, lit);
+	ALBEDO = base * (0.92 + grain) * mix(vec3(0.42, 0.4, 0.48), sun_color * 0.88, lit);
 }

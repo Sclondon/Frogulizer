@@ -5,7 +5,7 @@ extends SceneTree
 ##   godot --path . --resolution 540x1100 --script tests/shots.gd -- <folder>
 
 var folder := "user://shots"
-var shots: Array = ["audience", "stage", "floor", "lead", "conductor", "crane", "bank", "wheel", "bow"]
+var shots: Array = ["audience", "stage", "floor", "singer", "lead", "conductor", "crane", "bank", "broadside", "wheel", "bow"]
 
 
 func _initialize() -> void:

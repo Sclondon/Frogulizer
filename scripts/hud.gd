@@ -168,6 +168,12 @@ func _on_touch(event: InputEvent) -> void:
 	_shown_for = 0.0
 
 
+## Gone straight aboard (a render has no one to tap).
+func skip_card() -> void:
+	_boarded = true
+	_card.hide()
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:

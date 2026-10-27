@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://mdu5skb0hqll"
-path="res://.godot/imported/frog_lo.glb-62c064e7323ec42f5fdab2f76bea217e.scn"
+uid="uid://ctvgvukjknwgv"
+path="res://.godot/imported/frog_slim.glb-20e4a36bde7d3b2b5bd613a84e0a26aa.scn"
 
 [deps]
 
-source_file="res://models/frog_lo.glb"
-dest_files=["res://.godot/imported/frog_lo.glb-62c064e7323ec42f5fdab2f76bea217e.scn"]
+source_file="res://models/frog_slim.glb"
+dest_files=["res://.godot/imported/frog_slim.glb-20e4a36bde7d3b2b5bd613a84e0a26aa.scn"]
 
 [params]
 

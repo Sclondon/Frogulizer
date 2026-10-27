@@ -58,10 +58,12 @@ static func make(part: String) -> Instrument:
 
 
 func _shade() -> void:
-	Toon.apply(self)
+	FrogToon.apply(self)
 	for mesh in _brass:
 		var colour: Color = mesh.get_meta(&"colour", BRASS)
-		mesh.set_surface_override_material(0, Toon.gold(colour))
+		var shining := FrogToon.material(colour, "brass")
+		shining.next_pass = FrogToon.line(colour)
+		mesh.set_surface_override_material(0, shining)
 
 
 # --- The instruments ---

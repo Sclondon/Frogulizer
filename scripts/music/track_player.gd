@@ -37,6 +37,8 @@ var time := 0.0
 var _player: AudioStreamPlayer
 var _beats := PackedFloat32Array()
 var _bands: Array[PackedByteArray] = []
+var _voice := PackedByteArray()
+var _vowel := PackedByteArray()
 var _rate := 50
 var _onsets: Array = []      # per band: [[seconds, strength], ...]
 var _next_onset: Array[int] = []
@@ -60,7 +62,7 @@ func _ready() -> void:
 		tracks = listed.get("tracks", [])
 
 
-func play(which: int) -> void:
+func play(which: int, from := 0.0) -> void:
 	if tracks.is_empty():
 		return
 	index = posmod(which, tracks.size())
@@ -76,6 +78,8 @@ func play(which: int) -> void:
 	_bands.clear()
 	for coded: String in data.bands:
 		_bands.append(Marshalls.base64_to_raw(coded))
+	_voice = Marshalls.base64_to_raw(data.get("voice", ""))
+	_vowel = Marshalls.base64_to_raw(data.get("vowel", ""))
 	_onsets = data.onsets
 	_next_onset.clear()
 	for k in _onsets.size():
@@ -87,7 +91,9 @@ func play(which: int) -> void:
 	_stuck = 0.0
 	_clock_started = false
 	_player.stream = load("res://music/" + String(track.song))
-	_player.play()
+	_player.play(from)
+	time = from
+	_last_raw = from
 	playing = true
 	Groove.playing = true
 	Groove.meter = _meter
@@ -130,12 +136,17 @@ func progress() -> float:
 
 ## A band's loudness now, 0..1.
 func band(k: int) -> float:
-	if k >= _bands.size() or _bands[k].is_empty():
+	return _sample(_bands[k]) if k < _bands.size() else 0.0
+
+
+## A track of the map (bytes at `_rate` a second) where the song is now, 0..1, between its samples.
+func _sample(track: PackedByteArray) -> float:
+	if track.is_empty():
 		return 0.0
 	var f := time * _rate
-	var i := clampi(int(f), 0, _bands[k].size() - 1)
-	var j := mini(i + 1, _bands[k].size() - 1)
-	return lerpf(_bands[k][i], _bands[k][j], f - floorf(f)) / 255.0
+	var i := clampi(int(f), 0, track.size() - 1)
+	var j := mini(i + 1, track.size() - 1)
+	return lerpf(track[i], track[j], f - floorf(f)) / 255.0
 
 
 func _process(delta: float) -> void:
@@ -148,6 +159,8 @@ func _process(delta: float) -> void:
 	Groove.energy = lerpf(Groove.energy, whole, 1.0 - exp(-10.0 * delta))
 	Groove.bass = maxf(band(0), band(1))
 	Groove.treble = band(5)
+	Groove.voice = _sample(_voice)
+	Groove.vowel = _sample(_vowel) * 2.0 - 1.0
 	for part: String in PARTS:
 		var loud := 0.0
 		for k: int in PARTS[part]:

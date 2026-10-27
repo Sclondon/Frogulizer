@@ -17,19 +17,18 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 boot_splash/bg_color=Color(0, 0, 0, 1)
 boot_splash/show_image=false
 
-[audio]
-
-general/default_playback_type.web=1
-
 [display]
 
-window/size/viewport_width=720
+window/size/viewport_width=1280
 window/size/viewport_height=720
-window/size/window_width_override=1280
-window/size/window_height_override=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/handheld/orientation=6
+
+[filesystem]
+
+import/fbx2gltf/enabled=false
+import/blender/enabled=false
 
 [input_devices]
 
@@ -46,7 +45,13 @@ renderer/rendering_method.mobile="gl_compatibility"
 anti_aliasing/quality/msaa_3d=1
 environment/defaults/default_clear_color=Color(0, 0, 0, 1)
 
-[filesystem]
+[shader_globals]
 
-import/blender/enabled=false
-import/fbx2gltf/enabled=false
+water_clock={
+"type": "float",
+"value": 0.0
+}
+psx_wobble={
+"type": "float",
+"value": 0.0
+}

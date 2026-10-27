@@ -46,3 +46,10 @@ static func level_of(part: String) -> float:
 
 static func seconds_per_beat() -> float:
 	return 60.0 / bpm
+
+
+## The singing voice in the song (from the beat map: the middle of the stereo picture, where a
+## singer is, less the sides): how loud, 0..1, and which way its vowel leans, from -1 (round: O, U)
+## to 1 (bright: E, I), by where its sound sits.
+static var voice := 0.0
+static var vowel := 0.0

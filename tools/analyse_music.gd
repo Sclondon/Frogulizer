@@ -38,7 +38,8 @@ func _initialize() -> void:
 
 func _analyse(folder: String, out_path: String, song: String, title: String, artist: String) -> void:
 	var env: Array[PackedFloat32Array] = []
-	for k in BANDS.size() + 1:
+	# (the six bands, the whole, then the voice's middle low and high, and the sides' low and high)
+	for k in BANDS.size() + 5:
 		var bytes := FileAccess.get_file_as_bytes(folder.path_join("b%d.raw" % k))
 		env.append(bytes.to_float32_array())
 	var frames := env[BANDS.size()].size()
@@ -51,7 +52,7 @@ func _analyse(folder: String, out_path: String, song: String, title: String, art
 
 	# Loudness per band, on a log scale, as a share of how loud that band gets in this song
 	var levels: Array[PackedFloat32Array] = []
-	for k in env.size():
+	for k in BANDS.size() + 1:
 		var l := PackedFloat32Array()
 		l.resize(frames)
 		for i in frames:
@@ -103,6 +104,9 @@ func _analyse(folder: String, out_path: String, song: String, title: String, art
 		"onsets": [],
 	}
 	var step := RATE / OUT_RATE
+	var voice := _voice(env, frames)
+	data["voice"] = Marshalls.raw_to_base64(_packed(voice[0], step))
+	data["vowel"] = Marshalls.raw_to_base64(_packed(voice[1], step))
 	for k in levels.size():
 		var packed := PackedByteArray()
 		packed.resize(frames / step)
@@ -119,6 +123,51 @@ func _analyse(folder: String, out_path: String, song: String, title: String, art
 	file.close()
 	print("ANALYSED %s: %.1f s, %.1f bpm, %d/4 time from beat %d, %d beats, onsets %s" % [song.get_file(), seconds, bpm, bar.x, bar.y, beats.size(),
 			str(data.onsets.map(func(o: Array) -> int: return o.size()))])
+
+
+## The voice, as well as it can be told from the mix: how much louder the middle of the stereo
+## picture is than its sides, in the voice's low and high bands, eased so a mouth can follow it
+## (0..1); and its vowel, from where that sound sits, 0 (low: round, O and U) to 1 (high: E and I).
+func _voice(env: Array[PackedFloat32Array], frames: int) -> Array[PackedFloat32Array]:
+	var low := PackedFloat32Array()
+	var high := PackedFloat32Array()
+	low.resize(frames)
+	high.resize(frames)
+	for i in frames:
+		low[i] = maxf(0.0, sqrt(maxf(env[7][i], 0.0)) - 1.1 * sqrt(maxf(env[9][i], 0.0)))
+		high[i] = maxf(0.0, sqrt(maxf(env[8][i], 0.0)) - 1.1 * sqrt(maxf(env[10][i], 0.0)))
+	var loud := PackedFloat32Array()
+	loud.resize(frames)
+	for i in frames:
+		loud[i] = low[i] + high[i]
+	var top := _percentile(loud, 0.97)
+	var floor_ := _percentile(loud, 0.35)
+	var voice := PackedFloat32Array()
+	var vowel := PackedFloat32Array()
+	voice.resize(frames)
+	vowel.resize(frames)
+	var v := 0.0
+	var w := 0.5
+	for i in frames:
+		var target := clampf((loud[i] - floor_) / maxf(top - floor_, 1e-6), 0.0, 1.0)
+		# (opening quickly, closing a little slower: syllables, not a flutter)
+		v += (target - v) * (0.55 if target > v else 0.3)
+		voice[i] = v
+		var share := high[i] / maxf(low[i] + high[i], 1e-6)
+		w += (share - w) * 0.15
+		vowel[i] = clampf((w - 0.25) / 0.5, 0.0, 1.0)
+	return [voice, vowel]
+
+
+func _packed(values: PackedFloat32Array, step: int) -> PackedByteArray:
+	var packed := PackedByteArray()
+	packed.resize(values.size() / step)
+	for i in packed.size():
+		var v := 0.0
+		for j in step:
+			v = maxf(v, values[i * step + j])
+		packed[i] = clampi(roundi(v * 255.0), 0, 255)
+	return packed
 
 
 ## The beat's length in frames: the lag at which the onsets repeat most strongly,

@@ -4,38 +4,41 @@ Run from the project root:
     blender --background --python tools/build_frogs.py
     blender --background --python tools/build_frogs.py -- <folder>   # also renders previews there
 
-Writes models/frog.glb and models/frog_lo.glb (and editable copies in tools/).
+Writes models/frog_<body>.glb and models/frog_<body>_lo.glb for each body in BODIES (and editable
+copies in tools/).
 
-Anthropomorphic frogs in Victorian Sunday best, after the riverboat frogs in
-Over the Garden Wall (see inpsirationArt/): a broad flat head as wide as the
-shoulders, sitting straight on the body with no neck to speak of; a wide mouth
-right round the front; big round eyes up on top, under heavy lids that droop
-half shut; a pear of a body, narrow in the shoulder and round in the belly
-(pale cream in front); thin arms and long thin fingers ending in round pads;
-thin legs; and long flat webbed feet, always bare.
+Anthropomorphic frogs in Victorian Sunday best, after the riverboat frogs in Over the Garden Wall
+(inpsirationArt/, frogBody.jpg above all). The head is a long, flat-topped wedge: a rounded snout,
+a brow over each eye, the crown running straight back and down into the back with no neck, so the
+head and the body are one skin. The mouth is a long line from the snout back to its corners under
+the eyes, and stops there. Under it the lower jaw and the throat are one piece of their own, a
+shade lighter, as is the belly. The eyes sit in sockets on top under heavy lids that droop. Thin
+arms, three long fingers and a thumb with round pads; thin legs; long flat webbed feet, always bare.
+Some are warty (subtly: an option, `warts`).
 
-It is built on the boy's skeleton (tools/build_figure_template.py has the
-contract), so CharacterRig (and FrogRig, scripts/frog_rig.gd, on it) moves it
-as it moves the boy. Its own extra bones, which FrogRig poses:
-    jaw          (under head) hinges the lower jaw from behind the corners of the mouth
-    lid_l/lid_r  (under head) the upper lids, turned about the eye's centre on X to blink
-    eye_l/eye_r  (under head) the eyes, which CharacterRig already turns to look about
-Hands are three long fingers and a thumb (finger0..2 a/b/c, thumba/b), each with
-a round pad at its tip.
+There are three bodies, so a crowd is not all one shape: `round` (a pear), `slim` (tall, long in the
+leg, narrow) and `squat` (a toad: short legs, broad, a bigger head). Each is its own model, and the
+rig measures each.
 
-Clothes are options on slots (CharacterRig.restyle: a mesh named
-`frog_<slot>__<option>` shows when the look's "parts" names it):
-    hat:   top, bowler, shako, boater, bonnet, helmet, cap, fez, none
-    coat:  tails, band, frock, jacket, dress, waistcoat, none
-    neck:  bow, cravat, scarf, none
-    legs:  trousers, breeches, none
-Colours are by material (Toon recolours by name: see FrogLook).
+It is built on the boy's skeleton (tools/build_figure_template.py has the contract), so
+CharacterRig, and FrogRig (scripts/frog_rig.gd) on it, moves it as it moves the boy. Its own extra
+bones, which FrogRig poses:
+    jaw              (under head) the lower jaw and throat, hinged behind the corners of the mouth
+    lid_l/lid_r      (under head) the upper lids, turned about the eye's centre on X to blink
+    eye_l/eye_r      (under head) the eyes, which CharacterRig already turns to look about
+    tongue0..3       (under jaw) the long tongue, a chain: folded away (tongue0 scaled down) or flailing
+Hands are three long fingers and a thumb (finger0..2 a/b/c, thumba/b) with round pads.
+
+Clothes and the warts are options on slots (CharacterRig.restyle shows a mesh named
+`frog_<slot>__<option>` when the look's "parts" names it); FrogLook lists them.
 """
 
 import math
 import os
+import random
 import sys
 
+import bmesh
 import bpy
 from mathutils import Matrix, Vector
 
@@ -47,58 +50,82 @@ blend = kit.blend
 PREVIEWS = kit.PREVIEW_DIR
 kit.PREVIEW_DIR = None  # (the kit's own previews are the boy's; these are below)
 
-NAME = "frog"
+# --- The bodies: legs, how tall and broad the trunk is against the round one, arms, head ---
 
-# --- Joints (Godot space: metres, Y up, facing +Z, +X his left) ---
+BODIES = {
+# (Short stout bodies on long thin limbs: `limb` thins the arms and legs.)
+    "round": {"thigh": 0.26, "shin": 0.27, "tall": 0.82, "broad": 1.12, "upper_arm": 0.21, "forearm": 0.2, "head": 1.0, "limb": 0.8},
+    "slim": {"thigh": 0.29, "shin": 0.3, "tall": 0.95, "broad": 0.92, "upper_arm": 0.22, "forearm": 0.21, "head": 0.95, "limb": 0.75},
+    "squat": {"thigh": 0.22, "shin": 0.23, "tall": 0.72, "broad": 1.32, "upper_arm": 0.19, "forearm": 0.18, "head": 1.08, "limb": 0.85},
+}
 
 ANKLE_Y = 0.05
-THIGH = 0.24
-SHIN = 0.25
-HIP_X = 0.078
-HIP_Y = ANKLE_Y + SHIN + THIGH
-KNEE_Y = HIP_Y - THIGH
-HIPS = Vector((0.0, HIP_Y + 0.03, 0.0))
-SPINE = Vector((0.0, 0.66, 0.0))
-CHEST = Vector((0.0, 0.80, 0.0))
-NECK = Vector((0.0, 0.90, 0.0))
-HEAD = Vector((0.0, 0.945, 0.0))
-SHOULDER = Vector((0.145, 0.865, 0.0))
-UPPER_ARM = 0.19
-FOREARM = 0.18
-ELBOW_X = SHOULDER.x + UPPER_ARM
-WRIST_X = ELBOW_X + FOREARM
 TOE = Vector((0.0, -0.035, 0.075))  # where the foot bends, from the ankle
 
-# The head: everything above the line of the mouth is the head bone's; below it, the jaw's.
-MOUTH_Y = 0.995
-HEAD_Z = 0.02
-JAW = Vector((0.0, MOUTH_Y - 0.005, -0.075))  # the hinge, behind the corners of the mouth
-EYE_RADIUS = 0.041
-EYE_CENTRE = Vector((0.078, 1.098, 0.088))
-EYE_WAY = Vector((0.36, 0.12, 0.92)).normalized()
-LID_RADIUS = EYE_RADIUS + 0.0055
-# The lid at rest covers from behind the eye round over the top to this angle
-# (from straight up, towards the front): just above the pupil, the sleepy look.
-LID_EDGE = math.radians(48.0)
-HAT_Y = 1.13  # where a hat sits, on the crown between and behind the eyes
-HAT_Z = -0.02
+# The trunk of the round body, from the crotch up: (height above the crotch, half width, half depth, forward).
+# (It does not narrow to a neck: it tapers up into the head, which is the top of it, as in the concept art.)
+TORSO_ROUND = [(0.0, 0.05, 0.05, 0.0), (0.03, 0.12, 0.10, 0.0), (0.08, 0.158, 0.13, 0.008), (0.15, 0.17, 0.143, 0.022),
+               (0.22, 0.167, 0.142, 0.026), (0.29, 0.16, 0.132, 0.02), (0.35, 0.155, 0.122, 0.012), (0.40, 0.152, 0.116, 0.008),
+               (0.44, 0.15, 0.112, 0.004), (0.49, 0.145, 0.11, 0.0)]
 
-# Fingers: (offset across the hand, length, radius, how far it fans out from the middle)
-FINGERS = [(0.017, 0.068, 0.0095, 0.22), (0.0, 0.074, 0.0098, 0.0), (-0.017, 0.066, 0.0092, -0.22)]
-KNUCKLES = (0.0, 0.45, 0.76)
-PALM = 0.048
-THUMB_LENGTH = 0.05
+# Set for each body by `shape_body` (and read by everything below).
+THIGH = SHIN = HIP_X = HIP_Y = KNEE_Y = CROTCH = TALL = BROAD = HEAD_SIZE = LIMB = 0.0
+HIPS = SPINE = CHEST = NECK = HEAD = SHOULDER = HEAD_ORIGIN = Vector()
+UPPER_ARM = FOREARM = ELBOW_X = WRIST_X = HAT_Y = HAT_Z = 0.0
+TORSO = []
 
-# --- Colours (sRGB). Toon gives `eyewhite` and `pupil` a wet glint. FrogLook
-# (scripts/frog_look.gd) recolours any of these by name. ---
+
+def shape_body(name):
+    global THIGH, SHIN, HIP_X, HIP_Y, KNEE_Y, CROTCH, TALL, BROAD, HEAD_SIZE, HIPS, SPINE, CHEST, NECK, HEAD, SHOULDER
+    global HEAD_ORIGIN, UPPER_ARM, FOREARM, ELBOW_X, WRIST_X, HAT_Y, HAT_Z, TORSO, LIMB
+    body = BODIES[name]
+    THIGH, SHIN = body["thigh"], body["shin"]
+    TALL, BROAD, HEAD_SIZE, LIMB = body["tall"], body["broad"], body["head"], body["limb"]
+    UPPER_ARM, FOREARM = body["upper_arm"], body["forearm"]
+    HIP_X = 0.078 * (0.6 + 0.4 * BROAD)
+    HIP_Y = ANKLE_Y + SHIN + THIGH
+    KNEE_Y = HIP_Y - THIGH
+    CROTCH = HIP_Y - 0.04
+    HIPS = Vector((0.0, HIP_Y + 0.03, 0.0))
+    SPINE = Vector((0.0, T(0.16), 0.0))
+    CHEST = Vector((0.0, T(0.30), 0.0))
+    NECK = Vector((0.0, T(0.40), 0.0))
+    HEAD = Vector((0.0, T(0.445), 0.0))
+    SHOULDER = Vector((0.145 * BROAD ** 0.7, T(0.365), 0.0))
+    ELBOW_X = SHOULDER.x + UPPER_ARM
+    WRIST_X = ELBOW_X + FOREARM
+    TORSO = [(T(h), rx * BROAD, rz * (0.6 + 0.4 * BROAD), z) for h, rx, rz, z in TORSO_ROUND]
+    # The head: drawn about the middle of its mouth (head space, below), which sits here
+    HEAD_ORIGIN = Vector((0.0, T(0.495), 0.0))
+    hat = head_point(Vector((0.0, 0.104, -0.03)))
+    HAT_Y, HAT_Z = hat.y, hat.z
+
+
+def T(height):
+    """A height on the round body's trunk (above its crotch) on this body's trunk."""
+    return CROTCH + height * TALL
+
+
+def head_point(p):
+    """From head space (the middle of the mouth at the origin, at the round body's size) to the model."""
+    return HEAD_ORIGIN + p * HEAD_SIZE
+
+
+def head_space(p):
+    return (p - HEAD_ORIGIN) / HEAD_SIZE
+
+
+# --- Colours (sRGB). Toon gives `eyewhite` and `pupil` a wet glint. FrogLook recolours any by name. ---
 
 MATERIALS = [
-    ("skin", (0.45, 0.55, 0.27)),
-    ("belly", (0.82, 0.80, 0.55)),
-    ("eyewhite", (0.95, 0.93, 0.80)),
+    ("skin", (0.42, 0.52, 0.25)),
+    ("belly", (0.62, 0.68, 0.40)),
+    ("eye_l", (0.95, 0.93, 0.82)),
+    ("eye_r", (0.95, 0.93, 0.82)),
     ("pupil", (0.04, 0.04, 0.05)),
-    ("mouth", (0.32, 0.09, 0.10)),
-    ("tongue", (0.86, 0.45, 0.45)),
+    ("ink", (0.05, 0.04, 0.04)),
+    ("mouth", (0.36, 0.10, 0.12)),
+    ("tongue", (0.86, 0.46, 0.48)),
     ("coat", (0.42, 0.13, 0.12)),
     ("trim", (0.84, 0.66, 0.24)),
     ("vest", (0.66, 0.52, 0.25)),
@@ -110,14 +137,14 @@ MATERIALS = [
     ("dress", (0.62, 0.50, 0.70)),
     ("feather", (0.86, 0.80, 0.92)),
 ]
-SKIN, BELLY, EYEWHITE, PUPIL, MOUTH, TONGUE, COAT, TRIM, VEST, TROUSERS, HAT, BAND, COLLAR, TIE, DRESS, FEATHER = range(len(MATERIALS))
+SKIN, BELLY, EYE_L, EYE_R, PUPIL, INK, MOUTH, TONGUE, COAT, TRIM, VEST, TROUSERS, HAT, BAND, COLLAR, TIE, DRESS, FEATHER = range(len(MATERIALS))
 
 
 # --- Small shape helpers ---
 
 def loft(b, loops, start=True, end=True):
-    """Skins rings of points (each the same count, going the same way round) into
-    a closed surface, capping either end with a point in its middle."""
+    """Skins rings of points (each the same count, going the same way round) into a closed
+    surface, capping either end with a point in its middle."""
     count = len(loops[0])
     made = [[b._vert(p, None) for p in loop] for loop in loops]
     faces = []
@@ -127,25 +154,28 @@ def loft(b, loops, start=True, end=True):
             faces.append(b.bm.faces.new((a[i], a[j], c[j], c[i])))
     for use, ring, points in ((start, made[0], loops[0]), (end, made[-1], loops[-1])):
         if use:
-            middle = sum(points, Vector()) / count
-            pole = b._vert(middle, None)
+            pole = b._vert(sum(points, Vector()) / count, None)
             for i in range(count):
                 faces.append(b.bm.faces.new((ring[i], ring[(i + 1) % count], pole)))
-    import bmesh
     bmesh.ops.recalc_face_normals(b.bm, faces=faces)
 
 
-def outline(y, rx, front, back, centre_z, power=2.3, count=28):
-    """A level ring, wider one way than the other and fuller in front than behind (a head seen from above)."""
+def section(z, half, top, bottom, flat, count=28, flat_top=False):
+    """A slice across the head at `z` (head space): round over the top, and underneath as flat as
+    `flat` says (0 round, 1 flat as a plate, which is what the mouth line cuts). `flat_top` the
+    other way up (the jaw: flat along the mouth, round underneath)."""
     if kit.LOW:
         count = 12
     points = []
+    middle = (top + bottom) * 0.5
     for k in range(count):
         a = math.tau * k / count
         c, s = math.cos(a), math.sin(a)
-        x = rx * math.copysign(abs(c) ** (2.0 / power), c)
-        z = (front if s > 0.0 else back) * math.copysign(abs(s) ** (2.0 / power), s)
-        points.append(Vector((x, y, centre_z + z)))
+        # (an oval, eased towards a soft flat only along the mouth's line: never a box)
+        power = (2.0 if s > 0.0 else 2.0 + 1.8 * flat) if not flat_top else (2.0 + 1.8 * flat if s > 0.0 else 2.0)
+        x = half * math.copysign(abs(c) ** (2.0 / power), c)
+        y = middle + (top - middle if s > 0.0 else middle - bottom) * math.copysign(abs(s) ** (2.0 / power), s)
+        points.append(Vector((x, y, z)))
     return points
 
 
@@ -161,141 +191,223 @@ def sides():
     return (1.0, -1.0)
 
 
-# --- The head ---
-
-# The head above the mouth, as level slices: (height above the mouth, half width, reach forward, reach back)
-# (Low at the back, so the crown runs straight down into the shoulders: a wedge from the side, no neck.)
-CRANIUM = [(0.0, 0.150, 0.168, 0.098), (0.012, 0.155, 0.168, 0.100), (0.035, 0.151, 0.158, 0.092), (0.06, 0.137, 0.142, 0.074),
-           (0.08, 0.117, 0.120, 0.054), (0.097, 0.090, 0.092, 0.034), (0.108, 0.060, 0.062, 0.018), (0.115, 0.026, 0.028, 0.004)]
-# The jaw and throat below it, down to where they go into the body: (depth below the mouth, half width, forward, back, centre shift)
-JAWLINE = [(0.0, 0.149, 0.166, 0.098, 0.0), (0.016, 0.151, 0.160, 0.100, 0.0), (0.04, 0.145, 0.140, 0.100, -0.004),
-           (0.065, 0.130, 0.110, 0.098, -0.010), (0.09, 0.112, 0.075, 0.094, -0.016), (0.11, 0.098, 0.045, 0.090, -0.020),
-           (0.125, 0.090, 0.020, 0.086, -0.022)]
-
-# The head is drawn at the sizes above and then made this much bigger about the
-# middle of the mouth: frog folk are mostly head.
-HEAD_SIZE = 1.22
-HEAD_PIVOT = Vector((0.0, MOUTH_Y, 0.0))
+def painted(b, fuse, paint):
+    """A builder's shapes as one mesh (fused if asked), each face given a material by `paint(centre, normal)`."""
+    mesh = kit.fused(b, None if kit.LOW else fuse)
+    for polygon in mesh.polygons:
+        polygon.material_index = paint(kit.from_blender(Vector(polygon.center)), kit.from_blender(Vector(polygon.normal)))
+    return mesh
 
 
-def big(p):
-    return HEAD_PIVOT + (p - HEAD_PIVOT) * HEAD_SIZE
+def mesh_part(make):
+    """A part whose mesh is made whole (and painted) rather than filled into the kit's builder."""
+    return lambda _b: make()
 
 
-def unbig(p):
-    return HEAD_PIVOT + (p - HEAD_PIVOT) / HEAD_SIZE
+# --- The head (in head space: the middle of the mouth at the origin, facing +Z) ---
+
+# Slices from the snout back: (z, half width, top, bottom, how flat underneath). In front of the
+# corners of the mouth the underside is the flat line of the mouth; behind them the slices go down
+# into the back and the throat, so the head runs on into the body.
+CRANIUM = [(0.192, 0.042, 0.036, 0.004, 1.0), (0.18, 0.084, 0.07, 0.0, 1.0), (0.152, 0.116, 0.096, 0.0, 1.0),
+           (0.11, 0.14, 0.114, 0.0, 1.0), (0.07, 0.154, 0.126, 0.0, 1.0), (0.03, 0.162, 0.13, 0.0, 1.0),
+           (-0.01, 0.163, 0.124, -0.004, 1.0), (-0.045, 0.158, 0.11, -0.03, 0.6), (-0.075, 0.148, 0.088, -0.07, 0.2),
+           (-0.10, 0.132, 0.058, -0.09, 0.0), (-0.115, 0.10, 0.02, -0.08, 0.0)]
+# (and a nape, fused with the crown and the trunk: the back of the head going down smoothly into the back)
+NAPE = (Vector((0.0, -0.075, -0.055)), Vector((0.142, 0.12, 0.085)))
+# The jaw and throat under the mouth: (z, half width, top, bottom). The back of it is tucked inside the
+# cheeks and the neck, so the head shows no seam behind the corners of the mouth.
+# (Its top rises a hair above the mouth's line, into the head, so a shut mouth shows no gap.)
+JAWLINE = [(0.178, 0.05, 0.006, -0.018), (0.158, 0.094, 0.006, -0.036), (0.125, 0.122, 0.006, -0.058), (0.085, 0.14, 0.006, -0.078),
+           (0.045, 0.149, 0.006, -0.095), (0.005, 0.153, 0.005, -0.108), (-0.03, 0.15, -0.006, -0.12), (-0.07, 0.136, -0.04, -0.13),
+           (-0.10, 0.115, -0.07, -0.135)]
+JAW_HINGE = Vector((0.0, -0.01, -0.06))
+EYE_CENTRE = Vector((0.082, 0.1, 0.05))
+EYE_WAY = Vector((0.5, 0.18, 0.85)).normalized()
+EYE_RADIUS = 0.036
+# How far round the eyeball its visible cap reaches from the middle (the rest is under the skin)
+EYE_CAP = math.radians(72.0)
+LID_RADIUS = EYE_RADIUS + 0.005
+# The lid at rest covers from behind the eye round over the top to this angle (from straight up,
+# towards the front): over the top of the pupil, the sleepy look. FrogRig droops it further.
+LID_EDGE = math.radians(40.0)
+PUPIL_SIZE = Vector((0.021, 0.019, 0.006))
+# (it lies in the slit, so it slides out between the lips)
+TONGUE_ROOT = Vector((0.0, -0.002, -0.02))
+TONGUE_LENGTH = 0.40
+TONGUE_JOINTS = (0.0, 0.11, 0.22, 0.31)
 
 
 def smile(p):
     """The mouth's line rises a little towards its corners: a frog's smirk."""
-    lift = 0.012 * blend(0.06, -0.07, p.z) * blend(0.03, 0.14, abs(p.x))
-    return Vector((p.x, p.y + lift * blend(MOUTH_Y + 0.07, MOUTH_Y, p.y) * blend(MOUTH_Y - 0.08, MOUTH_Y, p.y), p.z))
+    lift = 0.01 * blend(0.06, -0.04, p.z) * blend(0.05, 0.14, abs(p.x)) * (1.0 - blend(0.0, 0.04, abs(p.y)))
+    return Vector((p.x, p.y + lift, p.z))
 
 
-def eye_centre(side, drawn=True):
-    """Where an eye is: as drawn (made bigger with the head), or as laid out above."""
-    e = Vector((side * EYE_CENTRE.x, EYE_CENTRE.y, EYE_CENTRE.z))
-    return big(e) if drawn else e
+def in_head(b, shapes):
+    b.place = lambda p: head_point(smile(p))
+    shapes()
+    b.place = None
+
+
+def eye_centre(side):
+    return Vector((side * EYE_CENTRE.x, EYE_CENTRE.y, EYE_CENTRE.z))
 
 
 def eye_way(side):
     return Vector((side * EYE_WAY.x, EYE_WAY.y, EYE_WAY.z))
 
 
-def head(b):
-    b.place = lambda p: big(smile(p))
-    loft(b, [outline(MOUTH_Y + h, rx, front, back, HEAD_Z) for h, rx, front, back in CRANIUM])
-    b.place = big
-    # The mounds the eyes sit up in, and a brow ridge running back from each
-    for side in sides():
-        e = eye_centre(side, False)
-        b.ellipsoid(e - eye_way(side) * 0.022 + Vector((0.0, -0.010, 0.0)), Vector((0.047, 0.044, 0.047)), None, 16, 9)
-        b.ellipsoid(e + Vector((-side * 0.01, -0.03, -0.05)), Vector((0.04, 0.03, 0.05)), None, 12, 6)
-    # Nostrils: two small bumps on the snout
-    for side in sides():
-        b.ellipsoid(Vector((side * 0.026, MOUTH_Y + 0.062, HEAD_Z + 0.150)), Vector((0.011, 0.008, 0.008)), None, 8, 4)
-    b.place = None
-
-
-def jaw(b):
-    b.place = lambda p: big(smile(p))
-    loft(b, [outline(MOUTH_Y - d, rx, front, back, HEAD_Z + shift) for d, rx, front, back, shift in JAWLINE])
-    b.place = None
-
-
-def jaw_mesh():
-    """The jaw and throat, fused."""
+def skin_mesh():
+    """All the bare skin as one surface, fused: the head with its jaw and throat, the back of the
+    head running down into the back, the trunk, the arms, hands and fingers, the legs, feet, toes
+    and webs, as the frogs in the concept art are one smooth shape. The mouth is not cut: the skin
+    shader draws its line, and FrogRig drops the jaw (all that is below the line and in front of
+    its corners) to open it, stretching a thin band under the line which the shader paints as the
+    inside of the mouth (see `mouth_coords`). How pale the skin is goes in its vertex colour."""
     b = kit.Builder()
-    jaw(b)
-    return painted(b, (0.003, 4, 9000), lambda p, n: SKIN)
+
+    def head():
+        loft(b, [section(z, half, top, bottom, flat) for z, half, top, bottom, flat in CRANIUM])
+        loft(b, [section(z, half, top, bottom, 0.85, flat_top=True) for z, half, top, bottom in JAWLINE])
+        for side in sides():
+            e = eye_centre(side)
+            # the socket the eye sits in
+            b.ellipsoid(e - eye_way(side) * 0.012 + Vector((0.0, -0.01, 0.0)), Vector((0.046, 0.04, 0.046)), None, 16, 9)
+            # the nostrils, small bumps on the snout
+            b.ellipsoid(Vector((side * 0.024, 0.058, 0.168)), Vector((0.01, 0.007, 0.008)), None, 8, 4)
+        b.ellipsoid(NAPE[0], NAPE[1], None, 20, 10)
+    in_head(b, head)
+    b.tube([kit.upright(0.0, y, z, rx, rz) for y, rx, rz, z in TORSO], 24)
+    arms(b)
+    hands(b)
+    fingers(b)
+    legs(b)
+    feet(b)
+    webs(b)
+    mesh = kit.fused(b, (0.006, 3, 5000) if kit.LOW else (0.0028, 6, 16000))
+    for polygon in mesh.polygons:
+        polygon.material_index = SKIN
+    return mesh
 
 
-def mouth(b):
-    b.place = big
-    # The roof of the mouth, dark, inside the head where the jaw meets it
-    b.ellipsoid(Vector((0.0, MOUTH_Y - 0.004, HEAD_Z + 0.03)), Vector((0.135, 0.022, 0.125)), None, 20, 6)
-    b.place = None
+def mouth_at(q):
+    """Where a point (head space) is against the mouth, for the skin shader to draw it by: how far
+    round it (-1 at one corner, 1 at the other; well beyond for anywhere else), and how far below
+    its line. Written in the vertex colour (see `add_paleness`), taken where each point rests."""
+    flat = Vector((q.x, 0.0, q.z - SLIT_MIDDLE.z))
+    a = math.atan2(flat.x, flat.z) / SLIT_SWEEP
+    # (behind the head, or far from the mouth's height, nothing: well away)
+    if flat.length < 0.05 or flat.length > 0.21 or abs(q.y) > 0.08:
+        return (4.0, 1.0)
+    return (a, lip_y(q) - q.y)
+
+
+# The mouth: round the head from one corner to the other about this middle (head space), this far
+# each way from straight ahead.
+SLIT_MIDDLE = Vector((0.0, 0.0, 0.025))
+SLIT_SWEEP = math.radians(112.0)
+# The band under the mouth's line that stretches when the jaw drops (head space, metres).
+MOUTH_BAND = 0.02
+
+
+def lip_y(q):
+    """The height of the mouth's line at a point (head space): level, rising a little at the corners."""
+    return smile(Vector((q.x, 0.0, q.z))).y
+
+
+def skin_paint(p, n):
+    return SKIN
+
+
+def paleness(p):
+    """How pale the skin is at a point, 0..1, smoothly: the jaw and the throat (below the mouth,
+    forward of the cheeks, from right at the lip), and the front of the belly down to the crotch.
+    Written as a vertex colour; shaders/toon.gdshader cuts it at a half into a clean edge."""
+    q = head_space(p)
+    # (the jaw and throat: from the lip down to where the throat meets the chest, not round the back)
+    jaw = blend(0.0, 0.003, lip_y(q) - q.y) * blend(-0.11, -0.05, q.z + 0.35 * min(q.y + 0.02, 0.0)) * blend(-0.22, -0.14, q.y)
+    # (and no wider than the jaw: the arms are at the throat's height)
+    jaw *= 1.0 - blend(0.13, 0.165, abs(q.x))
+    centre, u, _v = ring_at(TORSO, min(max(p.y, TORSO[0][0]), TORSO[-1][0]))
+    around = abs(math.atan2(p.x, p.z - centre.z + 0.04))
+    trunk = (1.0 - blend(0.8, 1.05, around)) * blend(CROTCH + 0.01, CROTCH + 0.05, p.y) * (1.0 - blend(u.x + 0.01, u.x + 0.04, abs(p.x)))
+    trunk *= 1.0 - blend(lip_y(q) - 0.002, lip_y(q) + 0.002, q.y)
+    return max(jaw, trunk)
+
+
+def crease_x(z, y):
+    """How far out the head's surface is at height `y` on its slice at `z` (head space): where the
+    jaw meets it, which is the line of the mouth."""
+    slices = sorted(CRANIUM, key=lambda c: c[0])
+    for (z0, h0, t0, b0, f0), (z1, h1, t1, b1, f1) in zip(slices, slices[1:]):
+        if z0 <= z <= z1:
+            k = (z - z0) / (z1 - z0)
+            half, top, bottom, flat = h0 + (h1 - h0) * k, t0 + (t1 - t0) * k, b0 + (b1 - b0) * k, f0 + (f1 - f0) * k
+            break
+    else:
+        return 0.0
+    middle = (top + bottom) * 0.5
+    power = 2.0 + 1.8 * flat
+    if y >= middle:
+        return half
+    s = min(max((middle - y) / max(middle - bottom, 1e-6), 0.0), 1.0) ** (power / 2.0)
+    return half * math.sqrt(max(1.0 - s * s, 0.0)) ** (2.0 / power)
 
 
 def tongue(b):
-    b.place = big
-    b.ellipsoid(Vector((0.0, MOUTH_Y - 0.008, HEAD_Z + 0.04)), Vector((0.085, 0.016, 0.095)), None, 16, 5)
-    b.place = None
+    """The long tongue, lying straight forward from the back of the mouth; FrogRig folds it away
+    (its root scaled down, inside the mouth) or throws it out flailing."""
+    def shapes():
+        rows = []
+        steps = 12
+        for k in range(steps + 1):
+            t = k / steps
+            half = 0.03 * (1.0 - 0.45 * t)
+            rows.append((TONGUE_ROOT + Z * TONGUE_LENGTH * t, X * half, Y * half * 0.42))
+        b.tube(kit.dome(rows[0], -Z, 0.01, 2)[::-1] + rows + kit.dome(rows[-1], Z, 0.016, 3), 12)
+    in_head(b, shapes)
 
 
-def eyes(b):
-    b.place = big
-    for side in sides():
-        b.ellipsoid(eye_centre(side, False), Vector((EYE_RADIUS,) * 3), None, 18, 10)
-    b.place = None
-
-
-def pupils(b):
-    b.place = big
-    for side in sides():
-        e = eye_centre(side, False)
+def eye_cap(b, side):
+    """One eye: the cap of a ball set in its socket, with texture coordinates across it (-1..1,
+    looking out along it: X across, Y up) for shaders/eye.gdshader, which draws on it the white,
+    the pupil and the lid, so the white is always a clean oval."""
+    def shapes():
+        e = eye_centre(side)
         way = eye_way(side)
-        tilt = frame_of(way)
-        b.ellipsoid(e + way * (EYE_RADIUS - 0.003), Vector((0.0175, 0.0135, 0.006)), tilt, 14, 5)
-    b.place = None
+        frame = frame_of(way)
+        across, up = frame.col[0], frame.col[1]
+        rings, steps = (8, 24) if not kit.LOW else (4, 12)
+        reach = math.sin(EYE_CAP)
+        made = []
+        for r in range(rings + 1):
+            t = EYE_CAP * r / rings
+            ring = []
+            for k in range(steps if r > 0 else 1):
+                a = math.tau * k / steps
+                d = across * math.cos(a) + up * math.sin(a)
+                point = e + (way * math.cos(t) + d * math.sin(t)) * EYE_RADIUS
+                uv = (math.sin(t) * math.cos(a) / reach * 0.5 + 0.5, math.sin(t) * math.sin(a) / reach * 0.5 + 0.5)
+                ring.append((b._vert(point, None), uv))
+            made.append(ring)
+        faces = []
+        for r in range(rings):
+            for k in range(steps):
+                corners = [made[r][0 if r == 0 else k], made[r + 1][k], made[r + 1][(k + 1) % steps]]
+                if r > 0:
+                    corners.append(made[r][(k + 1) % steps])
+                face = b.bm.faces.new([c[0] for c in corners][::-1])
+                for loop, corner in zip(face.loops, corners[::-1]):
+                    loop[b.uv].uv = corner[1]
+                faces.append(face)
+    in_head(b, shapes)
 
 
-def lids(b):
-    """Each upper lid: a shell over the top of the eyeball, from well behind it
-    round over the top to LID_EDGE. In slices across the eye (along X, which is
-    the axis FrogRig turns it about to blink), each a crescent."""
-    b.place = big
-    slices = 9 if not kit.LOW else 5
-    arc = 12 if not kit.LOW else 6
-    for side in sides():
-        e = eye_centre(side, False)
-        loops = []
-        for k in range(slices):
-            x = (-0.94 + 1.88 * k / (slices - 1)) * LID_RADIUS
-            outer = math.sqrt(max(LID_RADIUS ** 2 - x * x, 1e-6))
-            inner = math.sqrt(max((LID_RADIUS - 0.005) ** 2 - x * x, 1e-6))
-            loop = []
-            for i in range(arc + 1):
-                a = -1.9 + (LID_EDGE + 1.9) * i / arc
-                loop.append(e + Vector((x, outer * math.cos(a), outer * math.sin(a))))
-            for i in range(arc, -1, -1):
-                a = -1.9 + (LID_EDGE + 1.9) * i / arc
-                loop.append(e + Vector((x, inner * math.cos(a), inner * math.sin(a))))
-            loops.append(loop)
-        loft(b, loops)
-    b.place = None
-
-
-# --- The body ---
-
-# Bare skin: (height, half width, half depth, forward), crotch to throat. A pear.
-TORSO = [(0.50, 0.05, 0.05, 0.0), (0.53, 0.12, 0.10, 0.0), (0.58, 0.158, 0.130, 0.008), (0.65, 0.170, 0.143, 0.022),
-         (0.72, 0.166, 0.142, 0.026), (0.79, 0.152, 0.128, 0.018), (0.85, 0.137, 0.110, 0.004), (0.89, 0.134, 0.106, -0.004),
-         (0.93, 0.132, 0.106, -0.012), (0.97, 0.122, 0.10, -0.02), (1.0, 0.10, 0.09, -0.025)]
-
+# --- The body ---# --- The body ---
 
 def ring_at(profile, y, grow=0.0):
-    """The body's ring at a height, from a profile, with something added all round (for clothes over it)."""
+    """The trunk's ring at a height, with something added all round (for clothes over it)."""
     for (y0, rx0, rz0, z0), (y1, rx1, rz1, z1) in zip(profile, profile[1:]):
         if y0 <= y <= y1:
             t = (y - y0) / (y1 - y0)
@@ -304,31 +416,20 @@ def ring_at(profile, y, grow=0.0):
     return kit.upright(0.0, y, z0, rx + grow, rz + grow)
 
 
-def torso(b):
-    b.tube([kit.upright(0.0, y, z, rx, rz) for y, rx, rz, z in TORSO], 24)
-    # (and the nape, carrying the back of the head down into the shoulders)
-    b.ellipsoid(Vector((0.0, 0.94, -0.045)), Vector((0.125, 0.09, 0.075)), None, 16, 8)
-
-
-def torso_mesh():
-    b = kit.Builder()
-    torso(b)
-
-    def paint(p, n):
-        # The pale front: the belly and the chest, up to the throat
-        centre = ring_at(TORSO, p.y)[0]
-        around = abs(math.atan2(p.x, p.z - centre.z + 0.04))
-        return BELLY if around < 0.95 and 0.53 < p.y < 0.97 else SKIN
-    return painted(b, (0.0045, 4, 7000), paint)
-
-
-# Arms, straight out: (distance from the shoulder, radius)
-ARM = [(-0.05, 0.040), (0.0, 0.036), (0.08, 0.031), (UPPER_ARM, 0.027), (0.28, 0.025), (UPPER_ARM + FOREARM - 0.01, 0.020), (UPPER_ARM + FOREARM + 0.01, 0.018)]
+def arm_profile():
+    return [(-0.05, 0.040), (0.0, 0.036), (0.08, 0.031), (UPPER_ARM, 0.027), (UPPER_ARM + 0.09, 0.025),
+            (UPPER_ARM + FOREARM - 0.01, 0.020), (UPPER_ARM + FOREARM + 0.01, 0.018)]
 
 
 def arms(b):
     for side in sides():
-        b.tube([(Vector((side * (SHOULDER.x + d), SHOULDER.y, 0.0)), Y * r, Z * r * 1.05) for d, r in ARM], 12)
+        b.tube([(Vector((side * (SHOULDER.x + d), SHOULDER.y, 0.0)), Y * r * LIMB, Z * r * 1.05 * LIMB) for d, r in arm_profile()], 12)
+
+
+FINGERS = [(0.017, 0.068, 0.0095, 0.22), (0.0, 0.074, 0.0098, 0.0), (-0.017, 0.066, 0.0092, -0.22)]
+KNUCKLES = (0.0, 0.45, 0.76)
+PALM = 0.048
+THUMB_LENGTH = 0.05
 
 
 def hand_wrist(side):
@@ -348,7 +449,6 @@ def thumb_line(side):
 def hands(b):
     for side in sides():
         wrist = hand_wrist(side)
-        # (distance past the wrist, half thickness, half width): up inside the arm, flattening into the palm
         palm = [(-0.02, 0.018, 0.019), (0.0, 0.015, 0.019), (0.02, 0.013, 0.025), (0.04, 0.012, 0.030), (PALM + 0.004, 0.011, 0.028)]
         rings = [(wrist + X * side * d, Y * ry, Z * rz) for d, ry, rz in palm]
         b.tube(rings + kit.dome(rings[-1], X * side, 0.008, 2), 12)
@@ -360,41 +460,34 @@ def fingers(b):
             knuckle, along = finger_line(side, index)
             spans = (-0.1, 0.0, 0.2, 0.38, 0.45, 0.52, 0.68, 0.76, 0.84, 0.92)
             b.strand([knuckle + along * length * t for t in spans], [radius * (1.0 - 0.25 * max(t, 0.0)) for t in spans], 8)
-            # The round pad at its tip
             b.ellipsoid(knuckle + along * length * 0.97, Vector((radius * 1.35, radius * 1.05, radius * 1.35)), None, 10, 5)
         root, along = thumb_line(side)
         b.strand([root + along * THUMB_LENGTH * t for t in (-0.2, 0.0, 0.3, 0.5, 0.7, 0.9)], [0.0105, 0.0105, 0.0098, 0.009, 0.0085, 0.008], 8)
         b.ellipsoid(root + along * THUMB_LENGTH * 0.95, Vector((0.012, 0.01, 0.012)), None, 10, 5)
 
 
-# Legs: (height, radius). Thin, a little thicker in the thigh.
-LEG = [(HIP_Y + 0.05, 0.055), (HIP_Y - 0.02, 0.054), (0.42, 0.045), (KNEE_Y, 0.036), (0.24, 0.032), (0.14, 0.026), (0.08, 0.023), (0.05, 0.022)]
+def leg_profile():
+    thick = 0.8 + 0.2 * BROAD
+    return [(HIP_Y + 0.05, 0.055 * thick), (HIP_Y - 0.02, 0.054 * thick), (KNEE_Y + THIGH * 0.5, 0.045 * thick), (KNEE_Y, 0.036),
+            (KNEE_Y - SHIN * 0.4, 0.032), (ANKLE_Y + 0.09, 0.026), (ANKLE_Y + 0.03, 0.023), (ANKLE_Y, 0.022)]
 
 
 def legs(b):
     for side in sides():
-        b.tube([kit.upright(side * HIP_X, y, 0.0, r, r) for y, r in LEG], 12)
+        b.tube([kit.upright(side * HIP_X, y, 0.0, r * LIMB, r * LIMB) for y, r in leg_profile()], 12)
 
 
-# Each foot's toes, from the ankle: (angle out from straight ahead, length, radius). Long, splayed, with pads.
 TOES = [(-0.42, 0.13, 0.010), (-0.12, 0.165, 0.011), (0.2, 0.15, 0.011), (0.5, 0.11, 0.0095)]
 
 
 def toe_lines(side):
     root = Vector((side * HIP_X, 0.012, 0.045))
-    out = []
-    for angle, length, radius in TOES:
-        way = Vector((side * math.sin(angle) * (1.0 if angle > 0 else 1.0), 0.0, math.cos(angle)))
-        # (the outer toes on each side are on the outside of that foot)
-        way = Vector((side * math.sin(angle), 0.0, math.cos(angle)))
-        out.append((root, way.normalized(), length, radius))
-    return out
+    return [(root, Vector((side * math.sin(angle), 0.0, math.cos(angle))).normalized(), length, radius) for angle, length, radius in TOES]
 
 
 def feet(b):
     for side in sides():
         ankle = Vector((side * HIP_X, ANKLE_Y, 0.0))
-        # The heel and the top of the foot, flat on the ground, broadening forward
         foot = [(-0.04, 0.0, 0.026, 0.022), (-0.02, 0.004, 0.032, 0.03), (0.01, -0.006, 0.036, 0.028),
                 (0.04, -0.024, 0.044, 0.018), (0.07, -0.034, 0.05, 0.011)]
         rings = [(ankle + Vector((0.0, y, z)), X * rx, Y * ry) for z, y, rx, ry in foot]
@@ -406,183 +499,185 @@ def feet(b):
 
 
 def webs(b):
-    """The webbing between the toes: a thin sheet from the middle of the foot out to
-    two-thirds of the way along each toe, its edge scalloped in between."""
+    """The webbing between the toes: a thin sheet out to two-thirds of the way along each toe, scalloped between."""
     for side in sides():
         lines = toe_lines(side)
-        loop_top, loop_bottom = [], []
-        root = lines[0][0] + Vector((0.0, 0.0, -0.01))
+        points = [lines[0][0] + Vector((0.0, 0.0, -0.01))]
         for k, (r, way, length, _radius) in enumerate(lines):
-            tip = r + way * length * 0.72
-            loop_top.append(tip)
+            points.append(r + way * length * 0.72)
             if k + 1 < len(lines):
                 r2, way2, length2, _ = lines[k + 1]
-                mid = (r + way * length * 0.45 + r2 + way2 * length2 * 0.45) * 0.5
-                loop_top.append(mid)
-        points = [root] + loop_top
+                points.append((r + way * length * 0.45 + r2 + way2 * length2 * 0.45) * 0.5)
         middle = sum(points, Vector()) / len(points)
-        made_top = [b._vert(p + Vector((0.0, 0.004, 0.0)), 0.0) for p in points]
-        made_bottom = [b._vert(Vector((p.x, 0.001, p.z)), None) for p in points]
+        top = [b._vert(p + Vector((0.0, 0.004, 0.0)), 0.0) for p in points]
+        bottom = [b._vert(Vector((p.x, 0.001, p.z)), None) for p in points]
         top_pole = b._vert(middle + Vector((0.0, 0.004, 0.0)), 0.0)
         bottom_pole = b._vert(Vector((middle.x, 0.001, middle.z)), None)
-        n = len(points)
         faces = []
+        n = len(points)
         for i in range(n):
             j = (i + 1) % n
-            faces.append(b.bm.faces.new((made_top[i], made_top[j], top_pole)))
-            faces.append(b.bm.faces.new((made_bottom[j], made_bottom[i], bottom_pole)))
-            faces.append(b.bm.faces.new((made_top[j], made_top[i], made_bottom[i], made_bottom[j])))
-        import bmesh
+            faces.append(b.bm.faces.new((top[i], top[j], top_pole)))
+            faces.append(b.bm.faces.new((bottom[j], bottom[i], bottom_pole)))
+            faces.append(b.bm.faces.new((top[j], top[i], bottom[i], bottom[j])))
         bmesh.ops.recalc_face_normals(b.bm, faces=faces)
 
 
-def painted(b, fuse, paint):
-    """A builder's shapes as one mesh (fused if asked), each face given a material by `paint(centre, normal)`."""
-    mesh = kit.fused(b, None if kit.LOW else fuse)
-    for polygon in mesh.polygons:
-        centre = kit.from_blender(Vector(polygon.center))
-        normal = kit.from_blender(Vector(polygon.normal))
-        polygon.material_index = paint(centre, normal)
-    return mesh
+def warts(b):
+    """A toad's warts, low and few: on the crown and the back of the head, down the back, on the
+    upper arms and the thighs. Most frogs are smooth; this is an option (`warts`)."""
+    rng = random.Random(11)
+    found = []
+    for _ in range(46):
+        z = rng.uniform(-0.13, 0.06)
+        slices = [s for s in CRANIUM if abs(s[0] - z) < 0.03] or [CRANIUM[-3]]
+        _z, half, top, bottom, _flat = slices[0]
+        a = rng.uniform(0.25, math.pi - 0.25)
+        p = Vector((math.cos(a) * half * 0.92, (top + bottom) * 0.5 + math.sin(a) * (top - (top + bottom) * 0.5) * 0.95, z))
+        if abs(p.x) < 0.11 and abs(p.z - EYE_CENTRE.z) < 0.06 and p.y > 0.06:
+            continue
+        found.append((head_point(p), rng.uniform(0.007, 0.012)))
+    for _ in range(40):
+        y = T(rng.uniform(0.18, 0.44))
+        centre, u, v = ring_at(TORSO, y, -0.002)
+        a = rng.uniform(math.pi * 0.55, math.pi * 1.45)
+        found.append((centre + u * math.sin(a) + v * math.cos(a), rng.uniform(0.008, 0.013)))
+    for side in sides():
+        for _ in range(8):
+            d = rng.uniform(0.02, UPPER_ARM)
+            a = rng.uniform(0.0, math.pi)
+            found.append((Vector((side * (SHOULDER.x + d), SHOULDER.y + 0.03 * math.sin(a), -0.03 * math.cos(a))), rng.uniform(0.006, 0.009)))
+        for _ in range(10):
+            y = rng.uniform(KNEE_Y + 0.03, HIP_Y - 0.02)
+            a = rng.uniform(math.pi * 0.3, math.pi * 1.7)
+            found.append((Vector((side * HIP_X + 0.046 * math.sin(a), y, 0.046 * math.cos(a))), rng.uniform(0.007, 0.011)))
+    for at, r in found:
+        b.ellipsoid(at, Vector((r, r * 0.8, r)), None, 8, 4)
 
 
-def head_mesh():
-    b = kit.Builder()
-    head(b)
-    return painted(b, (0.0035, 3, 9000), lambda p, n: SKIN)
-
-
-# --- Clothes. Each is drawn over the bare body, and each is an object of its own. ---
+# --- Clothes: each drawn over the bare body, and each an object of its own ---
 
 def sleeves(b, grow, cuff, puffed=0.0):
     for side in sides():
-        sleeve = [(-0.06, 0.052), (0.0, 0.050 + puffed * 0.03), (0.07, 0.044 + puffed * 0.04), (UPPER_ARM, 0.036), (0.27, 0.033), (cuff, 0.031), (cuff + 0.005, 0.026)]
+        sleeve = [(-0.06, 0.052), (0.0, 0.050 + puffed * 0.03), (0.07, 0.044 + puffed * 0.04), (UPPER_ARM, 0.036),
+                  (UPPER_ARM + 0.08, 0.033), (cuff, 0.031), (cuff + 0.005, 0.026)]
         b.tube([(Vector((side * (SHOULDER.x + d), SHOULDER.y, 0.0)), Y * (r + grow), Z * (r + grow) * 1.05) for d, r in sleeve], 12)
 
 
-def coat_body(b, bottom, grow, top=0.955, flare=0.0, back_only=False):
-    """A garment round the trunk from `bottom` up to the throat, `grow` clear of the skin."""
+def coat_body(b, bottom, grow, top=0.455, flare=0.0):
+    """A garment round the trunk from `bottom` up to `top` (heights on the round trunk), `grow` clear of the skin."""
     rings = []
-    y = bottom
     steps = 9
     for k in range(steps + 1):
-        y = bottom + (top - bottom) * k / steps
-        centre, u, v = ring_at(TORSO, max(y, 0.53), grow)
-        if y < 0.56:
-            # Below the seat a skirt hangs straight down and flares a little
-            spread = flare * (0.56 - y) / 0.3
+        h = bottom + (top - bottom) * k / steps
+        centre, u, v = ring_at(TORSO, max(T(h), T(0.03)), grow)
+        if h < 0.06:
+            # below the seat a skirt hangs straight down and flares a little
+            spread = flare * (0.06 - h) / 0.3
             u = u + X * spread
             v = v + Z * spread
+        centre = Vector((centre.x, T(h), centre.z))
         rings.append((centre, u, v))
     b.tube(rings, 22)
 
 
 def tails(b, length):
-    """Two tails hanging behind, from the waist."""
     for side in sides():
         rows = []
+        back = ring_at(TORSO, T(0.12), 0.02)
         for t in (0.0, 0.25, 0.5, 0.75, 1.0):
-            y = 0.62 - length * t
-            centre = Vector((side * (0.07 - 0.015 * t), y, -0.13 - 0.02 * t))
-            rows.append((centre, X * (0.075 - 0.02 * t), Z * 0.012))
+            centre = Vector((side * (0.07 - 0.015 * t) * BROAD, T(0.12) - length * t, back[0].z - back[2].z - 0.02 * t + 0.01))
+            rows.append((centre, X * (0.075 - 0.02 * t) * BROAD, Z * 0.012))
         b.tube(rows, 10)
 
 
-def lapels(b, depth=0.86, low=0.70):
-    for side in sides():
-        rows = []
-        for t in (0.0, 0.33, 0.66, 1.0):
-            y = low + (depth + 0.07 - low) * t
-            centre, u, v = ring_at(TORSO, y, 0.022)
-            front = centre + v * 0.98
-            rows.append((front + X * side * (0.012 + 0.035 * t), X * 0.028 * (0.4 + 0.6 * t), Z * 0.006))
-        b.tube(rows, 8)
-
-
-def buttons(b, ys, x=0.0, grow=0.022, size=0.009):
-    for y in ys:
-        centre, _u, v = ring_at(TORSO, y, grow)
+def buttons(b, heights, x=0.0, grow=0.022, size=0.009):
+    for h in heights:
+        centre, _u, v = ring_at(TORSO, T(h), grow)
         for sx in ((x, -x) if x else (0.0,)):
-            b.ellipsoid(centre + v * 1.0 + X * sx, Vector((size, size, size * 0.6)), None, 8, 3)
+            b.ellipsoid(centre + v + X * sx * BROAD, Vector((size, size, size * 0.6)), None, 8, 3)
 
 
-def collar_band(b, height=0.03, grow=0.03):
-    b.tube([kit.upright(0.0, y, 0.0, 0.106 + grow, 0.090 + grow) for y in (0.94, 0.94 + height)], 20)
+def collar_ring(b, low=0.37, high=0.43, grow=0.012):
+    b.tube([ring_at(TORSO, T(h), grow) for h in (low, (low + high) * 0.5, high)], 20)
 
 
 def coat_tails(b):
-    coat_body(b, 0.60, 0.022)
+    coat_body(b, 0.10, 0.022)
     sleeves(b, 0.0, UPPER_ARM + FOREARM - 0.02)
-    tails(b, 0.3)
+    tails(b, 0.3 * TALL)
 
 
 def coat_band(b):
-    coat_body(b, 0.56, 0.024)
+    coat_body(b, 0.06, 0.024)
     sleeves(b, 0.002, UPPER_ARM + FOREARM - 0.02)
-    collar_band(b, 0.035, 0.028)
+    collar_ring(b, 0.40, 0.45, 0.03)
 
 
 def band_trim(b):
     # Gold braid across the chest, cuffs, a belt and epaulettes on a bandsman's jacket
-    buttons(b, (0.64, 0.70, 0.76, 0.82, 0.88), 0.045, 0.026, 0.009)
-    for y in (0.70, 0.76, 0.82):
-        centre, u, v = ring_at(TORSO, y, 0.026)
-        b.tube([(centre + v * 0.99 + X * x, Y * 0.005, Z * 0.004) for x in (-0.045, 0.0, 0.045)], 6)
+    buttons(b, (0.14, 0.20, 0.26, 0.32, 0.37), 0.045, 0.026, 0.009)
+    for h in (0.20, 0.26, 0.32):
+        centre, u, v = ring_at(TORSO, T(h), 0.026)
+        b.tube([(centre + v * 0.99 + X * x * BROAD, Y * 0.005, Z * 0.004) for x in (-0.045, 0.0, 0.045)], 6)
     for side in sides():
         b.ellipsoid(Vector((side * (SHOULDER.x + 0.01), SHOULDER.y + 0.04, 0.0)), Vector((0.05, 0.014, 0.045)), None, 12, 4)
         b.tube([(Vector((side * (WRIST_X - d), SHOULDER.y, 0.0)), Y * 0.034, Z * 0.036) for d in (0.035, 0.05, 0.065)], 12)
-    b.tube([kit.upright(0.0, y, ring_at(TORSO, 0.6, 0.0)[0].z, ring_at(TORSO, 0.6, 0.028)[1].x, ring_at(TORSO, 0.6, 0.028)[2].z) for y in (0.585, 0.615)], 22)
+    b.tube([ring_at(TORSO, T(h), 0.028) for h in (0.085, 0.115)], 22)
 
 
 def coat_frock(b):
-    coat_body(b, 0.33, 0.022, flare=0.05)
+    coat_body(b, -0.17, 0.022, flare=0.05)
     sleeves(b, 0.0, UPPER_ARM + FOREARM - 0.02)
 
 
 def coat_jacket(b):
-    coat_body(b, 0.53, 0.022, flare=0.02)
+    coat_body(b, 0.03, 0.022, flare=0.02)
     sleeves(b, 0.0, UPPER_ARM + FOREARM - 0.03)
 
 
 def coat_dress(b):
-    # A gown: fitted bodice, a full bell of a skirt to the ground, puffed sleeves
-    rings = []
-    for y, grow in ((0.955, 0.012), (0.90, 0.014), (0.82, 0.014), (0.72, 0.012), (0.66, 0.014)):
-        rings.append(ring_at(TORSO, y, grow))
-    for y, r, d in ((0.61, 0.20, 0.17), (0.50, 0.24, 0.22), (0.35, 0.28, 0.26), (0.18, 0.31, 0.29), (0.06, 0.33, 0.31), (0.035, 0.33, 0.31)):
-        rings.append(kit.upright(0.0, y, 0.01, r, d))
+    # A gown: a fitted bodice, a full bell of a skirt to the ground, puffed sleeves
+    rings = [ring_at(TORSO, T(h), grow) for h, grow in ((0.44, 0.012), (0.40, 0.014), (0.32, 0.014), (0.22, 0.012), (0.16, 0.014))]
+    flare = [(0.11, 0.20, 0.17), (0.0, 0.24, 0.22)]
+    for h, r, d in flare:
+        rings.append(kit.upright(0.0, T(h), 0.01, r * BROAD, d * BROAD))
+    for y, r, d in ((CROTCH * 0.62, 0.28, 0.26), (CROTCH * 0.33, 0.31, 0.29), (0.06, 0.33, 0.31), (0.035, 0.33, 0.31)):
+        rings.append(kit.upright(0.0, y, 0.01, r * (0.5 + 0.5 * BROAD), d * (0.5 + 0.5 * BROAD)))
     b.tube(rings[::-1], 26, 0.03)
     sleeves(b, 0.004, 0.24, puffed=1.0)
 
 
 def dress_frills(b):
     # A frill round the hem and lace at the throat
+    reach = 0.33 * (0.5 + 0.5 * BROAD)
     for k in range(18):
         a = math.tau * k / 18
-        b.ellipsoid(Vector((math.sin(a) * 0.33, 0.055, 0.01 + math.cos(a) * 0.31)), Vector((0.05, 0.03, 0.05)), None, 8, 4)
-    b.tube([kit.upright(0.0, y, 0.004, 0.13, 0.115) for y in (0.93, 0.96, 0.975)], 20)
+        b.ellipsoid(Vector((math.sin(a) * reach, 0.055, 0.01 + math.cos(a) * reach * 0.94)), Vector((0.05, 0.03, 0.05)), None, 8, 4)
+    collar_ring(b, 0.40, 0.46, 0.02)
 
 
 def coat_waistcoat(b):
-    coat_body(b, 0.58, 0.016, top=0.93)
+    coat_body(b, 0.08, 0.016, top=0.43)
     for side in sides():
-        # (the armholes are bare: short stubs at the shoulders)
         b.tube([(Vector((side * (SHOULDER.x + d), SHOULDER.y, 0.0)), Y * 0.048, Z * 0.05) for d in (-0.05, 0.0, 0.02)], 12)
 
 
 def vest_front(b):
-    # A waistcoat's front showing between the lapels of a tailcoat
-    rows = [ring_at(TORSO, y, 0.024) for y in (0.62, 0.66, 0.74, 0.82, 0.88)]
-    b.tube([(c + v * 0.97, X * 0.05 * (1.2 - 0.4 * k / 4), Z * 0.006) for k, (c, u, v) in enumerate(rows)], 8)
-    buttons(b, (0.66, 0.72, 0.78), 0.0, 0.032, 0.007)
+    # A waistcoat's front showing at the opening of a tailcoat
+    rows = [ring_at(TORSO, T(h), 0.024) for h in (0.12, 0.16, 0.24, 0.32, 0.38)]
+    b.tube([(c + v * 0.97, X * 0.05 * BROAD * (1.2 - 0.4 * k / 4), Z * 0.006) for k, (c, u, v) in enumerate(rows)], 8)
+    buttons(b, (0.16, 0.22, 0.28), 0.0, 0.032, 0.007)
 
 
 def trousers(b, bottom=0.10):
     # (the seat, and up over the belly to under the coat, clear of the skin)
-    b.tube([kit.upright(0.0, 0.48, 0.0, 0.07, 0.07)] + [ring_at(TORSO, y, 0.014) for y in (0.52, 0.56, 0.60, 0.64, 0.67)], 20)
+    b.tube([kit.upright(0.0, CROTCH - 0.02, 0.0, 0.07 * BROAD, 0.07)] + [ring_at(TORSO, T(h), 0.014) for h in (0.02, 0.06, 0.10, 0.14, 0.17)], 20)
     for side in sides():
-        leg = [(HIP_Y + 0.05, 0.072), (HIP_Y - 0.02, 0.07), (0.42, 0.062), (KNEE_Y, 0.054), (0.22, 0.05), (bottom + 0.02, 0.046), (bottom, 0.046)]
-        if bottom > 0.2:
+        thick = 0.8 + 0.2 * BROAD
+        leg = [(HIP_Y + 0.05, 0.072 * thick), (HIP_Y - 0.02, 0.07 * thick), (KNEE_Y + THIGH * 0.5, 0.062 * thick), (KNEE_Y, 0.054),
+               (KNEE_Y - SHIN * 0.45, 0.05), (bottom + 0.02, 0.046), (bottom, 0.046)]
+        if bottom > KNEE_Y - 0.1:
             leg = [(y, r) for y, r in leg if y > bottom + 0.02] + [(bottom + 0.02, 0.05), (bottom, 0.045)]
         b.tube([kit.upright(side * HIP_X, y, 0.0, r, r * 1.04) for y, r in leg], 14)
 
@@ -591,26 +686,26 @@ def breeches(b):
     trousers(b, KNEE_Y - 0.03)
 
 
-def collar_ring(b):
-    # A stiff white collar under the chin
-    b.tube([kit.upright(0.0, y, 0.004, 0.112, 0.098) for y in (0.905, 0.925, 0.945)], 20)
-
-
 def bow_tie(b):
-    at = Vector((0.0, 0.925, 0.118))
+    centre, _u, v = ring_at(TORSO, T(0.385), 0.012)
+    at = centre + v
     for side in sides():
         b.ellipsoid(at + Vector((side * 0.03, 0.0, 0.0)), Vector((0.03, 0.02, 0.012)), Matrix.Rotation(side * 0.25, 3, "Z"), 10, 4)
     b.ellipsoid(at + Vector((0.0, 0.0, 0.006)), Vector((0.012, 0.014, 0.012)), None, 8, 4)
 
 
 def cravat(b):
-    b.tube([kit.upright(0.0, y, 0.006, 0.118, 0.104) for y in (0.89, 0.92, 0.95)], 20)
-    b.ellipsoid(Vector((0.0, 0.86, 0.12)), Vector((0.04, 0.06, 0.03)), None, 12, 6)
+    collar_ring(b, 0.36, 0.43, 0.014)
+    centre, _u, v = ring_at(TORSO, T(0.33), 0.012)
+    b.ellipsoid(centre + v, Vector((0.04, 0.06, 0.03)), None, 12, 6)
 
 
 def scarf(b):
-    b.tube([kit.upright(0.0, y, 0.006, 0.125, 0.11) for y in (0.88, 0.905, 0.93, 0.955)], 20)
-    b.strand([Vector((0.06, 0.9, 0.12)), Vector((0.08, 0.82, 0.14)), Vector((0.09, 0.72, 0.16)), Vector((0.095, 0.64, 0.17))], [0.03, 0.028, 0.026, 0.024], 8)
+    collar_ring(b, 0.35, 0.44, 0.02)
+    centre, _u, v = ring_at(TORSO, T(0.37), 0.025)
+    start = centre + v + X * 0.05
+    b.strand([start, start + Vector((0.02, -0.08, 0.02)), start + Vector((0.03, -0.18, 0.04)), start + Vector((0.035, -0.26, 0.05))],
+             [0.03, 0.028, 0.026, 0.024], 8)
 
 
 def hat_ring(y, rx, rz):
@@ -646,14 +741,12 @@ def band_bowler(b):
 def hat_shako(b):
     # A bandsman's cap: a tall drum widening a little to a flat top, a stiff peak
     b.tube([hat_ring(y, rx, rz) for y, rx, rz in ((0.0, 0.066, 0.062), (0.11, 0.072, 0.068), (0.112, 0.05, 0.046))], 22)
-    peak = [(Vector((0.0, HAT_Y + 0.005, HAT_Z + z)), X * half, Y * 0.004) for z, half in ((0.04, 0.06), (0.07, 0.062), (0.095, 0.05), (0.105, 0.03))]
-    b.tube(peak, 10)
+    b.tube([(Vector((0.0, HAT_Y + 0.005, HAT_Z + z)), X * half, Y * 0.004) for z, half in ((0.04, 0.06), (0.07, 0.062), (0.095, 0.05), (0.105, 0.03))], 10)
 
 
 def band_shako(b):
     b.tube([hat_ring(y, 0.069, 0.065) for y in (0.012, 0.03)], 22)
     b.tube([hat_ring(y, 0.073, 0.069) for y in (0.096, 0.108)], 22)
-    # (a plume)
     b.ellipsoid(Vector((0.0, HAT_Y + 0.15, HAT_Z + 0.05)), Vector((0.015, 0.045, 0.015)), None, 8, 6)
 
 
@@ -666,42 +759,43 @@ def band_boater(b):
     b.tube([hat_ring(y, 0.068, 0.062) for y in (0.006, 0.024)], 22)
 
 
-def hat_bonnet(b):
-    # A lady's wide hat, tilted, with a feather
+def tilted(b, shapes):
     tilt = Matrix.Rotation(-0.18, 3, "X")
     b.place = lambda p: Vector((0.0, HAT_Y, HAT_Z)) + tilt @ (p - Vector((0.0, HAT_Y, HAT_Z)))
-    brim(b, 0.15, 0.14, 0.006, 0.02)
-    b.tube([hat_ring(y, rx, rz) for y, rx, rz in ((0.0, 0.07, 0.065), (0.05, 0.072, 0.067), (0.07, 0.05, 0.045))], 22)
+    shapes()
     b.place = None
+
+
+def hat_bonnet(b):
+    # A lady's wide hat, tilted, with feathers
+    def shapes():
+        brim(b, 0.15, 0.14, 0.006, 0.02)
+        b.tube([hat_ring(y, rx, rz) for y, rx, rz in ((0.0, 0.07, 0.065), (0.05, 0.072, 0.067), (0.07, 0.05, 0.045))], 22)
+    tilted(b, shapes)
 
 
 def band_bonnet(b):
-    tilt = Matrix.Rotation(-0.18, 3, "X")
-    b.place = lambda p: Vector((0.0, HAT_Y, HAT_Z)) + tilt @ (p - Vector((0.0, HAT_Y, HAT_Z)))
-    b.tube([hat_ring(y, 0.074, 0.069) for y in (0.006, 0.026)], 22)
-    for k in range(5):
-        a = -0.6 + 0.3 * k
-        b.ellipsoid(Vector((0.07 * math.sin(a) + 0.04, HAT_Y + 0.03, HAT_Z + 0.07 * math.cos(a))), Vector((0.018, 0.016, 0.018)), None, 8, 4)
-    b.place = None
+    def shapes():
+        b.tube([hat_ring(y, 0.074, 0.069) for y in (0.006, 0.026)], 22)
+        for k in range(5):
+            a = -0.6 + 0.3 * k
+            b.ellipsoid(Vector((0.07 * math.sin(a) + 0.04, HAT_Y + 0.03, HAT_Z + 0.07 * math.cos(a))), Vector((0.018, 0.016, 0.018)), None, 8, 4)
+    tilted(b, shapes)
 
 
 def bonnet_feather(b):
-    tilt = Matrix.Rotation(-0.18, 3, "X")
-    b.place = lambda p: Vector((0.0, HAT_Y, HAT_Z)) + tilt @ (p - Vector((0.0, HAT_Y, HAT_Z)))
-    for k, lean in enumerate((-0.35, 0.0, 0.3)):
-        base = Vector((-0.05 + 0.02 * k, HAT_Y + 0.05, HAT_Z - 0.02))
-        tip = base + Vector((-0.06 + lean * 0.1, 0.17 - abs(lean) * 0.05, -0.06))
-        mid = base.lerp(tip, 0.5) + Vector((-0.02, 0.01, 0.0))
-        b.strand([base, base.lerp(mid, 0.5), mid, mid.lerp(tip, 0.5), tip], [0.012, 0.024, 0.03, 0.024, 0.008], 8)
-    b.place = None
+    def shapes():
+        for k, lean in enumerate((-0.35, 0.0, 0.3)):
+            base = Vector((-0.05 + 0.02 * k, HAT_Y + 0.05, HAT_Z - 0.02))
+            tip = base + Vector((-0.06 + lean * 0.1, 0.17 - abs(lean) * 0.05, -0.06))
+            mid = base.lerp(tip, 0.5) + Vector((-0.02, 0.01, 0.0))
+            b.strand([base, base.lerp(mid, 0.5), mid, mid.lerp(tip, 0.5), tip], [0.012, 0.024, 0.03, 0.024, 0.008], 8)
+    tilted(b, shapes)
 
 
 def hat_helmet(b):
     # A tall policeman's helmet, with a star on the front
-    rings = []
-    for y, r in ((0.0, 0.074), (0.04, 0.078), (0.09, 0.07), (0.13, 0.05), (0.15, 0.024), (0.155, 0.01)):
-        rings.append(hat_ring(y, r, r * 0.95))
-    b.tube(rings, 22)
+    b.tube([hat_ring(y, r, r * 0.95) for y, r in ((0.0, 0.074), (0.04, 0.078), (0.09, 0.07), (0.13, 0.05), (0.15, 0.024), (0.155, 0.01))], 22)
     brim(b, 0.085, 0.085, 0.004)
 
 
@@ -713,8 +807,7 @@ def band_helmet(b):
 def hat_cap(b):
     # A peaked cap, a conductor's or a steamboat man's
     b.tube([hat_ring(y, rx, rz) for y, rx, rz in ((0.0, 0.068, 0.064), (0.035, 0.07, 0.066), (0.05, 0.085, 0.082), (0.065, 0.082, 0.08), (0.07, 0.05, 0.048))], 22)
-    peak = [(Vector((0.0, HAT_Y + 0.008 - 0.25 * (z - 0.05), HAT_Z + z)), X * half, Y * 0.004) for z, half in ((0.05, 0.062), (0.08, 0.064), (0.105, 0.05), (0.12, 0.028))]
-    b.tube(peak, 10)
+    b.tube([(Vector((0.0, HAT_Y + 0.008 - 0.25 * (z - 0.05), HAT_Z + z)), X * half, Y * 0.004) for z, half in ((0.05, 0.062), (0.08, 0.064), (0.105, 0.05), (0.12, 0.028))], 10)
 
 
 def band_cap(b):
@@ -733,11 +826,17 @@ def band_fez(b):
 # --- Skin weights ---
 
 def body_weights(p, skirt=0.0):
-    """The trunk, arms and legs, by where a point sits (the template's scheme).
-    `skirt` 1 keeps what hangs below the seat with the hips instead of the legs."""
+    """The trunk, arms and legs, by where a point sits (the template's scheme). `skirt` 1 keeps
+    what hangs below the seat with the hips, going some way with the legs."""
     suffix = "_l" if p.x >= 0.0 else "_r"
     reach = abs(p.x)
     arm = blend(SHOULDER.x - 0.03, SHOULDER.x + 0.03, reach) if p.y > CHEST.y - 0.03 else 0.0
+    # (only what is near the arm's own line: a broad trunk reaches out past the shoulders)
+    arm *= 1.0 - blend(0.045, 0.075, Vector((0.0, p.y - SHOULDER.y, p.z)).length) * (1.0 - blend(ELBOW_X - 0.05, ELBOW_X, reach))
+    # (and not the trunk's own flank under the arm: inside its outline, it is trunk)
+    if p.y < SHOULDER.y + 0.01 and TORSO:
+        flank = ring_at(TORSO, p.y)[1].x
+        arm *= blend(flank - 0.005, flank + 0.025, reach)
     fore = blend(ELBOW_X - 0.03, ELBOW_X + 0.03, reach)
     hand = blend(WRIST_X - 0.015, WRIST_X + 0.012, reach)
     leg = blend(HIP_Y + 0.035, HIP_Y - 0.05, p.y) * (1.0 - skirt)
@@ -745,7 +844,7 @@ def body_weights(p, skirt=0.0):
     shin = blend(KNEE_Y + 0.04, KNEE_Y - 0.04, p.y)
     low = blend(SPINE.y + 0.05, SPINE.y - 0.05, p.y)
     high = blend(CHEST.y - 0.06, CHEST.y + 0.05, p.y)
-    neck = blend(NECK.y - 0.03, NECK.y + 0.02, p.y) if reach < 0.12 else 0.0
+    neck = blend(NECK.y - 0.03, NECK.y + 0.03, p.y) if reach < SHOULDER.x - 0.01 else 0.0
     trunk = (1.0 - arm) * (1.0 - leg)
     result = {
         "hips": trunk * low,
@@ -757,12 +856,10 @@ def body_weights(p, skirt=0.0):
         "hand" + suffix: arm * fore * hand,
     }
     if skirt > 0.0:
-        # (a gown or a frock coat's skirts go some way with the legs, more the lower they hang)
         swing = blend(HIP_Y, 0.2, p.y) * 0.45 * skirt
         for name, share in (("_l", left), ("_r", 1.0 - left)):
             result["thigh" + name] = result.get("thigh" + name, 0.0) + swing * share
-        result["hips"] = result["hips"] * (1.0 - swing) + (1.0 - (1.0 - arm)) * 0.0
-        for key in ("spine", "chest", "neck"):
+        for key in ("hips", "spine", "chest", "neck"):
             result[key] *= (1.0 - swing)
     for name, share in (("_l", left), ("_r", 1.0 - left)):
         result["thigh" + name] = result.get("thigh" + name, 0.0) + leg * share * (1.0 - shin)
@@ -770,8 +867,8 @@ def body_weights(p, skirt=0.0):
     return result
 
 
-def line_weights(suffix, lines, p):
-    """Fingers or toes: find the line this point is on and how far along it, and share it out over its joints."""
+def line_weights(suffix, lines, p, parent):
+    """Fingers or the tongue: the line this point is on and how far along it, shared over its joints."""
     best = None
     for name, root, along, length, joints in lines:
         t = (p - root).dot(along)
@@ -781,31 +878,80 @@ def line_weights(suffix, lines, p):
     _away, name, t, joints, length = best
     soft = 0.006 / length
     shares = [blend(joint - soft, joint + soft, t) for joint in joints]
-    result = {"hand" + suffix: 1.0 - shares[0]}
+    result = {parent: 1.0 - shares[0]}
     for k, letter in enumerate("abc"[:len(joints)]):
         result[name + letter + suffix] = shares[k] - (shares[k + 1] if k + 1 < len(joints) else 0.0)
     return result
+
+
+def head_share(p):
+    """How much of a point of the skin goes with the head: all of it above the mouth's level, none below the neck."""
+    q = head_space(p)
+    return blend(-0.09, -0.02, q.y) * blend(-0.17, -0.12, q.z)
+
+
+def mixed(a, b, share):
+    out = {}
+    for name, w in a.items():
+        out[name] = out.get(name, 0.0) + w * (1.0 - share)
+    for name, w in b.items():
+        out[name] = out.get(name, 0.0) + w * share
+    return out
 
 
 def weights(part, p):
     suffix = "_l" if p.x >= 0.0 else "_r"
     side = 1.0 if p.x >= 0.0 else -1.0
     slot = part.split("__")[0]
-    if slot in ("head", "mouth", "nostrils") or slot.startswith("hat") or slot.startswith("band"):
+    if slot in ("mouth", "lip") or slot.startswith("hat"):
         return {"head": 1.0}
-    if slot == "jaw" or slot == "tongue":
+    if slot == "skin":
+        # The hands and fingers, out at the end of the arms
+        if abs(p.x) > WRIST_X - 0.015 and abs(p.y - SHOULDER.y) < 0.08:
+            if abs(p.x) < WRIST_X + PALM * 0.5:
+                return body_weights(p)
+            lines = [("finger%d" % i,) + finger_line(side, i) + (FINGERS[i][1], KNUCKLES) for i in range(len(FINGERS))]
+            lines.append(("thumb",) + thumb_line(side) + (THUMB_LENGTH, (0.0, 0.5)))
+            return line_weights(suffix, lines, p, "hand" + suffix)
+        # The feet, toes and webs
+        if p.y < 0.115 and abs(abs(p.x) - HIP_X) < 0.13:
+            shin = blend(0.075, 0.11, p.y)
+            toe = blend(TOE.z - 0.02, TOE.z + 0.02, p.z) * (1.0 - shin)
+            return {"shin" + suffix: shin, "foot" + suffix: 1.0 - shin - toe, "toe" + suffix: toe}
+        # The head: above the mouth's line, the head; just under it (MOUTH_BAND) and on down, in
+        # front of its corners, the jaw; the throat going down to the neck; the rest the body's
+        q = head_space(p)
+        a, d = mouth_at(q)
+        jaw = blend(0.0, MOUTH_BAND, d) * (1.0 - blend(0.92, 1.12, abs(a))) * blend(-0.17, -0.11, q.y)
+        # (the throat only: no wider than the jaw, or it takes the shoulders and arms with it)
+        throat = blend(-0.25, -0.12, q.y) * blend(-0.2, -0.05, q.z) * (1.0 - blend(0.1, 0.14, abs(q.x))) * (1.0 - head_share(p))
+        under = mixed(mixed(body_weights(p), {"head": 1.0}, head_share(p)), {"neck": 1.0}, throat)
+        return mixed(under, {"jaw": 1.0}, jaw)
+    if slot == "warts":
+        return mixed(body_weights(p), {"head": 1.0}, head_share(p))
+    if slot in ("jaw", "floor"):
         # The throat, low and behind, stays with the neck
-        q = unbig(p)
-        throat = max(blend(JAW.z + 0.03, JAW.z - 0.03, q.z), blend(MOUTH_Y - 0.08, MOUTH_Y - 0.12, q.y))
+        q = head_space(p)
+        throat = max(blend(JAW_HINGE.z + 0.02, JAW_HINGE.z - 0.04, q.z), blend(-0.11, -0.15, q.y))
         return {"jaw": 1.0 - throat, "neck": throat}
-    if slot in ("eyes", "pupils"):
-        return {"eye" + suffix: 1.0}
-    if slot == "lids":
-        return {"lid" + suffix: 1.0}
+    if slot == "tongue":
+        q = head_space(p)
+        t = (q.z - TONGUE_ROOT.z) / TONGUE_LENGTH
+        names = ["tongue%d" % k for k in range(len(TONGUE_JOINTS))]
+        shares = [blend(j - 0.03, j + 0.03, t) for j in TONGUE_JOINTS[1:]]
+        out = {}
+        last = 1.0
+        for k, name in enumerate(names):
+            nxt = shares[k] if k < len(shares) else 0.0
+            out[name] = last - nxt
+            last = nxt
+        return out
+    if slot in ("eye_l", "eye_r"):
+        return {"head": 1.0}
     if slot == "fingers":
         lines = [("finger%d" % i,) + finger_line(side, i) + (FINGERS[i][1], KNUCKLES) for i in range(len(FINGERS))]
         lines.append(("thumb",) + thumb_line(side) + (THUMB_LENGTH, (0.0, 0.5)))
-        return line_weights(suffix, lines, p)
+        return line_weights(suffix, lines, p, "hand" + suffix)
     if slot in ("feet", "webs"):
         shin = blend(0.075, 0.11, p.y)
         toe = blend(TOE.z - 0.02, TOE.z + 0.02, p.z) * (1.0 - shin)
@@ -813,7 +959,7 @@ def weights(part, p):
     if part in ("coat__dress", "coat__frock", "coattrim__dress"):
         return body_weights(p, 1.0)
     if part == "coat__tails":
-        return body_weights(p, 1.0 if p.z < -0.08 and p.y < 0.62 else 0.0)
+        return body_weights(p, 1.0 if p.z < -0.08 and p.y < T(0.12) else 0.0)
     return body_weights(p)
 
 
@@ -821,10 +967,14 @@ def weights(part, p):
 
 def bones():
     listed = [("hips", HIPS, None), ("spine", SPINE, "hips"), ("chest", CHEST, "spine"), ("neck", NECK, "chest"), ("head", HEAD, "neck"),
-              ("jaw", big(JAW), "head")]
+              ("jaw", head_point(JAW_HINGE), "head")]
+    parent = "jaw"
+    for k, along in enumerate(TONGUE_JOINTS):
+        listed.append(("tongue%d" % k, head_point(TONGUE_ROOT + Z * TONGUE_LENGTH * along), parent))
+        parent = "tongue%d" % k
     for side, suffix in ((1.0, "_l"), (-1.0, "_r")):
-        listed.append(("eye" + suffix, eye_centre(side), "head"))
-        listed.append(("lid" + suffix, eye_centre(side), "head"))
+        listed.append(("eye" + suffix, head_point(eye_centre(side)), "head"))
+        listed.append(("lid" + suffix, head_point(eye_centre(side)), "head"))
     for side, suffix in ((1.0, "_l"), (-1.0, "_r")):
         shoulder = Vector((side * SHOULDER.x, SHOULDER.y, 0.0))
         listed.append(("upper_arm" + suffix, shoulder, "chest"))
@@ -847,47 +997,33 @@ def bones():
     return listed
 
 
-def mesh_part(make):
-    """A part whose mesh is made whole (and painted) rather than filled into the kit's builder."""
-    return lambda _b: make()
-
-
-# (part, material, shapes, fuse). Parts with `__` in their names are clothes: each its own object.
+# (part, material, shapes, fuse). Parts with `__` in their names are options: each an object of its own.
 BODY = [
-    ("head", None, mesh_part(head_mesh), None),
-    ("jaw", None, mesh_part(jaw_mesh), None),
-    ("mouth", MOUTH, mouth, None),
+    ("skin", None, mesh_part(skin_mesh), None),
     ("tongue", TONGUE, tongue, None),
-    ("eyes", EYEWHITE, eyes, None),
-    ("pupils", PUPIL, pupils, None),
-    ("lids", SKIN, lids, None),
-    ("torso", None, mesh_part(torso_mesh), None),
-    ("arms", SKIN, arms, (0.004, 2, 1400)),
-    ("hands", SKIN, hands, (0.003, 2, 1000)),
-    ("fingers", SKIN, fingers, None),
-    ("legs", SKIN, legs, (0.004, 2, 1400)),
-    ("feet", SKIN, feet, (0.003, 2, 2400)),
-    ("webs", SKIN, webs, None),
+    ("eye_l", EYE_L, lambda b: eye_cap(b, 1.0), None),
+    ("eye_r", EYE_R, lambda b: eye_cap(b, -1.0), None),
 ]
-CLOTHES = [
-    ("coat__tails", COAT, coat_tails, (0.005, 3, 5000)),
+OPTIONS = [
+    ("warts__on", SKIN, warts, None),
+    ("coat__tails", COAT, coat_tails, (0.007, 3, 2200)),
     ("coattrim__tails", VEST, vest_front, None),
-    ("coat__band", COAT, coat_band, (0.005, 3, 4500)),
+    ("coat__band", COAT, coat_band, (0.007, 3, 2000)),
     ("coattrim__band", TRIM, band_trim, None),
-    ("coat__frock", COAT, coat_frock, (0.005, 3, 5000)),
-    ("coattrim__frock", TRIM, lambda b: buttons(b, (0.62, 0.70, 0.78), 0.05), None),
-    ("coat__jacket", COAT, coat_jacket, (0.005, 3, 4500)),
-    ("coattrim__jacket", TRIM, lambda b: buttons(b, (0.64, 0.72), 0.0), None),
-    ("coat__dress", DRESS, coat_dress, (0.006, 3, 5000)),
-    ("coattrim__dress", COLLAR, dress_frills, (0.006, 2, 2500)),
-    ("coat__waistcoat", VEST, coat_waistcoat, (0.005, 3, 3500)),
-    ("coattrim__waistcoat", TRIM, lambda b: buttons(b, (0.64, 0.70, 0.76, 0.82), 0.0, 0.018, 0.007), None),
+    ("coat__frock", COAT, coat_frock, (0.007, 3, 2200)),
+    ("coattrim__frock", TRIM, lambda b: buttons(b, (0.12, 0.20, 0.28), 0.05), None),
+    ("coat__jacket", COAT, coat_jacket, (0.007, 3, 2000)),
+    ("coattrim__jacket", TRIM, lambda b: buttons(b, (0.14, 0.22), 0.0), None),
+    ("coat__dress", DRESS, coat_dress, (0.008, 3, 2200)),
+    ("coattrim__dress", COLLAR, dress_frills, (0.008, 2, 1200)),
+    ("coat__waistcoat", VEST, coat_waistcoat, (0.007, 3, 1600)),
+    ("coattrim__waistcoat", TRIM, lambda b: buttons(b, (0.14, 0.20, 0.26, 0.32), 0.0, 0.018, 0.007), None),
     ("neck__bow", COLLAR, collar_ring, None),
     ("necktie__bow", TIE, bow_tie, None),
     ("neck__cravat", TIE, cravat, None),
-    ("neck__scarf", TIE, scarf, (0.005, 2, 1800)),
-    ("legs__trousers", TROUSERS, trousers, (0.005, 3, 3500)),
-    ("legs__breeches", TROUSERS, breeches, (0.005, 3, 3000)),
+    ("neck__scarf", TIE, scarf, (0.007, 2, 900)),
+    ("legs__trousers", TROUSERS, trousers, (0.007, 3, 1600)),
+    ("legs__breeches", TROUSERS, breeches, (0.007, 3, 1400)),
     ("hat__top", HAT, hat_top, None),
     ("hatband__top", BAND, band_top, None),
     ("hat__bowler", HAT, hat_bowler, None),
@@ -906,67 +1042,142 @@ CLOTHES = [
     ("hat__fez", HAT, hat_fez, None),
     ("hatband__fez", BAND, band_fez, None),
 ]
-# (A slot's trimmings are slots of their own: `coattrim`, `necktie`, `hatband`,
-# `hatfeather`. FrogLook names the same option for them as for the slot they trim.)
-PARTS = BODY + CLOTHES
-APART = [part for part, _m, _s, _f in CLOTHES]
+PARTS = BODY + OPTIONS
+APART = [part for part, _m, _s, _f in OPTIONS]
 
 
 def previews(folder, name):
-    """Renders the frog in a few turn-outs, from the front and three-quarters."""
+    """Renders the frog in a few turn-outs: front, side and three-quarters, and the head close up."""
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_WORKBENCH"
     scene.display.shading.light = "STUDIO"
     scene.display.shading.color_type = "MATERIAL"
     scene.display.shading.show_cavity = True
-    scene.render.resolution_x, scene.render.resolution_y = 700, 900
+    scene.render.resolution_x, scene.render.resolution_y = 600, 800
     scene.world = bpy.data.worlds.new("World")
     scene.world.color = (0.35, 0.38, 0.42)
     camera = bpy.data.objects.new("Camera", bpy.data.cameras.new("Camera"))
     camera.data.type = "ORTHO"
     scene.collection.objects.link(camera)
     scene.camera = camera
-    looks = {
-        "bare": {},
-        "gent": {"coat": "tails", "neck": "bow", "legs": "trousers", "hat": "top"},
-        "band": {"coat": "band", "legs": "trousers", "hat": "shako"},
-        "lady": {"coat": "dress", "hat": "bonnet"},
-        "frock": {"coat": "frock", "neck": "cravat", "legs": "trousers", "hat": "bowler"},
-        "police": {"coat": "jacket", "legs": "trousers", "hat": "helmet"},
-        "boater": {"coat": "waistcoat", "neck": "scarf", "legs": "breeches", "hat": "boater"},
-    }
+    looks = {"bare": {}, "gent": {"coat": "tails", "neck": "bow", "legs": "trousers", "hat": "top"},
+             "lady": {"coat": "dress", "hat": "bonnet"}, "warty": {"warts": "on", "coat": "waistcoat", "legs": "breeches", "hat": "cap"}}
     trims = {"coattrim": "coat", "necktie": "neck", "hatband": "hat", "hatfeather": "hat"}
-    views = [("front", (0, -1, 0.08), (0.0, 0.0, 0.62), 1.45), ("quarter", (0.7, -0.7, 0.25), (0.0, 0.0, 0.62), 1.45)]
+    middle = HEAD_ORIGIN.y * 0.55
+    views = [("front", (0, -1, 0.08), (0.0, 0.0, middle), 1.5), ("side", (1, 0, 0.05), (0.0, 0.0, middle), 1.5),
+             ("quarter", (0.7, -0.7, 0.25), (0.0, 0.0, middle), 1.5)]
     for look, parts in looks.items():
         for obj in bpy.data.objects:
             if "__" in obj.name:
                 slot, option = obj.name.split("__")
                 slot = slot.split("_")[-1]
-                wanted = parts.get(trims.get(slot, slot), "none")
-                obj.hide_render = wanted != option
-        for view, direction, target, frame in views if look in ("bare", "gent", "lady") else views[1:]:
+                obj.hide_render = parts.get(trims.get(slot, slot), "none") != option
+        for view, direction, target, frame in (views if look == "bare" else views[2:]):
             offset = Vector(direction).normalized() * 4.0
             camera.data.ortho_scale = frame
             camera.location = Vector(target) + offset
             camera.rotation_euler = (-offset).to_track_quat("-Z", "Y").to_euler()
             scene.render.filepath = os.path.join(folder, "%s_%s_%s.png" % (name, look, view))
             bpy.ops.render.render(write_still=True)
-    # and the head close up
     for obj in bpy.data.objects:
         if "__" in obj.name:
             obj.hide_render = True
-    for view, direction in (("head", (0.45, -0.85, 0.2)), ("headside", (1, 0, 0.05))):
+    head = kit.to_blender(head_point(Vector((0.0, 0.0, 0.0))))
+    for view, direction in (("head", (0.45, -0.85, 0.2)), ("headside", (1, 0, 0.05)), ("headback", (-0.5, 0.8, 0.3))):
         offset = Vector(direction).normalized() * 4.0
-        camera.data.ortho_scale = 0.45
-        camera.location = Vector((0.0, -0.03, 1.04)) + offset
+        camera.data.ortho_scale = 0.55
+        camera.location = head + offset
         camera.rotation_euler = (-offset).to_track_quat("-Z", "Y").to_euler()
         scene.render.filepath = os.path.join(folder, "%s_%s.png" % (name, view))
         bpy.ops.render.render(write_still=True)
 
 
-kit.export(NAME, bones(), PARTS, weights, MATERIALS, apart=APART)
-if PREVIEWS:
-    previews(PREVIEWS, NAME)
-if os.environ.get("FROG_ONLY_FULL") != "1":
-    kit.LOW = True
-    kit.export(NAME + "_lo", bones(), [(part, material, shapes, None) for part, material, shapes, _fuse in PARTS], weights, MATERIALS, apart=APART)
+# --- Mouth shapes (shape keys on the body), for singing: with the jaw, they make the vowels ---
+
+def mouth_region(q):
+    """How much a point (head space) is of the lips: near the mouth's line, in front of its corners."""
+    return (1.0 - blend(0.0, 0.05, abs(q.y))) * blend(-0.09, -0.04, q.z)
+
+
+def add_paleness():
+    """The body's vertex colour: red how pale (see `paleness`); green and blue where the point is
+    against the mouth (`mouth_at`: round it, a / 2.6 + 0.5; below its line, (d + 0.03) / 0.08), for
+    shaders/toon.gdshader to draw the mouth by. Floats, so nothing is rounded or made sRGB."""
+    body = bpy.data.objects.get(NAME_NOW)
+    if body is None or body.type != "MESH":
+        return
+    colours = body.data.color_attributes.new(name="pale", type="FLOAT_COLOR", domain="POINT")
+    for i, vert in enumerate(body.data.vertices):
+        p = kit.from_blender(vert.co)
+        a, d = mouth_at(head_space(p))
+        colours.data[i].color = (paleness(p), min(max(a / 2.6 + 0.5, 0.0), 1.0), min(max((d + 0.03) / 0.08, 0.0), 1.0), 1.0)
+    body.data.color_attributes.active_color_name = "pale"
+    body.data.color_attributes.render_color_index = body.data.color_attributes.find("pale")
+
+
+def add_mouth_shapes():
+    """`wide`: the corners drawn back, out and up (E, I, a grin). `round`: the lips gathered in and
+    pushed forward (O, U, a whistle). `frown`: the corners pulled down (doubt, dismay). On the body
+    object only (the clothes do not reach the mouth)."""
+    body = bpy.data.objects.get(NAME_NOW)
+    if body is None or body.type != "MESH":
+        return
+    body.shape_key_add(name="Basis", from_mix=False)
+    keys = {}
+    for key in ("wide", "round", "frown"):
+        keys[key] = body.shape_key_add(name=key, from_mix=False)
+    for i, vert in enumerate(body.data.vertices):
+        q = head_space(kit.from_blender(vert.co))
+        m = mouth_region(q)
+        if m <= 0.0:
+            continue
+        side = 1.0 if q.x >= 0.0 else -1.0
+        corner = blend(0.07, 0.15, abs(q.x))
+        wide = Vector((side * 0.014 * corner, 0.007 * corner, -0.018 * corner)) * m
+        front = blend(-0.04, 0.06, q.z)
+        gather = Vector((-side * 0.4 * max(abs(q.x) - 0.035, 0.0), 0.0, 0.02 * front)) * m * (0.4 + 0.6 * front)
+        keys["wide"].data[i].co = vert.co + kit.to_blender(wide * HEAD_SIZE) - kit.to_blender(Vector())
+        keys["round"].data[i].co = vert.co + kit.to_blender(gather * HEAD_SIZE) - kit.to_blender(Vector())
+        frown = Vector((0.0, -0.016 * corner * blend(-0.02, 0.02, -q.y + 0.02), 0.004 * corner)) * m
+        keys["frown"].data[i].co = vert.co + kit.to_blender(frown * HEAD_SIZE) - kit.to_blender(Vector())
+
+
+class _Scene:
+    def gltf(self, **options):
+        add_paleness()
+        add_mouth_shapes()
+        options["export_vertex_color"] = "ACTIVE"
+        bpy.ops.export_scene.gltf(**options)
+
+
+class _Ops:
+    export_scene = _Scene()
+
+    def __getattr__(self, name):
+        return getattr(bpy.ops, name)
+
+
+class _Bpy:
+    """bpy as the kit sees it: the same, but its glTF export first adds the mouth shapes."""
+    ops = _Ops()
+
+    def __getattr__(self, name):
+        return getattr(bpy, name)
+
+
+kit.bpy = _Bpy()
+NAME_NOW = ""
+
+ONLY_BODIES = [b for b in os.environ.get("FROG_BODIES", "").split(",") if b] or list(BODIES)
+for body in ONLY_BODIES:
+    kit.LOW = False
+    shape_body(body)
+    name = "frog_" + body
+    NAME_NOW = name
+    kit.export(name, bones(), PARTS, weights, MATERIALS, apart=APART)
+    if PREVIEWS:
+        previews(PREVIEWS, name)
+    if os.environ.get("FROG_ONLY_FULL") != "1":
+        kit.LOW = True
+        NAME_NOW = name + "_lo"
+        kit.export(name + "_lo", bones(), [(part, material, shapes, None) for part, material, shapes, _fuse in PARTS], weights, MATERIALS, apart=APART)

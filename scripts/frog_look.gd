@@ -2,7 +2,8 @@ class_name FrogLook
 ## How a frog (models/frog.glb, tools/build_frogs.py) may be turned out: its
 ## skin, its hat, coat, neckwear and legs, and the colours of all of them. A
 ## look is what CharacterRig.look takes: {"parts": slot -> option, "colours":
-## material name -> Color}, plus "size" and "build" for whoever stands it up.
+## material name -> Color}, plus "body" (which model: Frog.BODIES), "head" (how big its head is
+## against the model's), "size" and "build" for whoever stands it up, and "droop" (its lids).
 ##
 ## Each clothing slot has trimmings that are slots of their own in the model
 ## (`coattrim`, `necktie`, `hatband`, `hatfeather`); `parts_for` names the same
@@ -13,6 +14,7 @@ const COATS := ["tails", "frock", "jacket", "dress", "waistcoat", "none"]
 const NECKS := ["bow", "cravat", "scarf", "none"]
 const LEGS := ["trousers", "breeches", "none"]
 const TRIMS := {"coattrim": "coat", "necktie": "neck", "hatband": "hat", "hatfeather": "hat"}
+const BODIES := ["round", "round", "round", "slim", "slim", "squat", "squat"]
 
 ## Frog skins: olive, moss, sage, toad brown, bottle green, yellowish; and the pale belly of each.
 const SKINS := [Color(0.45, 0.55, 0.27), Color(0.36, 0.48, 0.22), Color(0.52, 0.58, 0.36), Color(0.48, 0.44, 0.26),
@@ -37,7 +39,7 @@ static func parts_for(chosen: Dictionary) -> Dictionary:
 	var parts := chosen.duplicate()
 	for trim: String in TRIMS:
 		parts[trim] = chosen.get(TRIMS[trim], "none")
-	for slot: String in ["hat", "coat", "neck", "legs"]:
+	for slot: String in ["hat", "coat", "neck", "legs", "warts"]:
 		if not parts.has(slot):
 			parts[slot] = "none"
 	return parts
@@ -49,11 +51,14 @@ static func random(seed: int) -> Dictionary:
 	rng.seed = seed * 7919 + 13
 	var pick := func(list: Array) -> Variant: return list[rng.randi() % list.size()]
 	var skin: Color = pick.call(SKINS)
-	var colours := {"skin": skin.lerp(Color(rng.randf(), rng.randf(), rng.randf()), 0.05), "belly": pick.call(BELLIES)}
+	var colours := {"skin": skin.lerp(Color(rng.randf(), rng.randf(), rng.randf()), 0.05)}
+	# (the throat and belly a shade lighter than the rest, a little more yellow)
+	colours["belly"] = (colours.skin as Color).lightened(0.3).lerp(Color(0.86, 0.84, 0.5), 0.15)
 	var chosen := {}
 	var kind := rng.randf()
-	var size := rng.randf_range(1.22, 1.42)
-	var build := rng.randf_range(0.92, 1.2)
+	var size := rng.randf_range(1.25, 1.45)
+	var build := rng.randf_range(0.94, 1.12)
+	var body: String = pick.call(BODIES)
 	if kind < 0.3:
 		# A lady: a gown and a wide hat with a feather
 		chosen = {"coat": "dress", "hat": "bonnet" if rng.randf() < 0.75 else "none", "neck": "none", "legs": "none"}
@@ -88,7 +93,24 @@ static func random(seed: int) -> Dictionary:
 		if chosen.hat == "helmet":
 			colours["coat"] = Color(0.16, 0.18, 0.30)
 			chosen.coat = "jacket"
-	return {"parts": parts_for(chosen), "colours": colours, "size": size, "build": build}
+	# (a few are warty: most of the toads, now and then a frog)
+	if rng.randf() < (0.6 if body == "squat" else 0.1):
+		chosen["warts"] = "on"
+		colours["skin"] = (colours["skin"] as Color).lerp(Color(0.45, 0.40, 0.24), 0.4)
+	return {"parts": parts_for(chosen), "colours": colours, "size": size, "build": build, "body": body,
+			"head": rng.randf_range(0.92, 1.1), "droop": rng.randf_range(0.1, 0.5)}
+
+
+## The singer at the front of the bandstand: tails and a bow tie in the band's scarlet, no hat.
+static func singer(seed: int) -> Dictionary:
+	var made := bandsman(seed)
+	made["parts"] = parts_for({"coat": "tails", "neck": "bow", "legs": "trousers", "hat": "none"})
+	made["colours"]["vest"] = BAND_GOLD
+	made["colours"]["tie"] = Color(0.10, 0.09, 0.10)
+	made["body"] = "slim"
+	made["size"] = 1.4
+	made["head"] = 1.05
+	return made
 
 
 ## A bandsman: scarlet coat with gold, a black shako with a gold band. The
@@ -97,14 +119,16 @@ static func bandsman(seed: int, conductor := false) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed * 104729 + 7
 	var colours := {
-		"skin": SKINS[rng.randi() % SKINS.size()], "belly": BELLIES[rng.randi() % BELLIES.size()],
+		"skin": SKINS[rng.randi() % SKINS.size()], "belly": Color.WHITE,
 		"coat": BAND_RED, "trim": BAND_GOLD, "trousers": Color(0.14, 0.14, 0.18), "hat": Color(0.10, 0.09, 0.10),
 		"band": BAND_GOLD, "vest": Color(0.92, 0.88, 0.80), "collar": Color(0.95, 0.93, 0.88), "tie": Color(0.10, 0.09, 0.10),
 	}
+	colours["belly"] = (colours.skin as Color).lightened(0.3).lerp(Color(0.86, 0.84, 0.5), 0.15)
 	var chosen := {"coat": "band", "hat": "shako", "neck": "none", "legs": "trousers"}
 	if conductor:
 		chosen = {"coat": "tails", "hat": "top", "neck": "bow", "legs": "trousers"}
 		colours["hat"] = BAND_RED.darkened(0.15)
 		colours["band"] = BAND_GOLD
-	return {"parts": parts_for(chosen), "colours": colours, "size": rng.randf_range(1.25, 1.4) if not conductor else 1.5,
-			"build": rng.randf_range(0.95, 1.18)}
+	return {"parts": parts_for(chosen), "colours": colours, "size": rng.randf_range(1.28, 1.42) if not conductor else 1.45,
+			"build": rng.randf_range(0.96, 1.1), "body": "round" if conductor else ["round", "squat", "slim"][rng.randi() % 3],
+			"head": rng.randf_range(0.95, 1.08), "droop": rng.randf_range(0.15, 0.35)}
