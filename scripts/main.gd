@@ -1,8 +1,7 @@
 extends Node3D
 ## Frogulizer: a music visualiser. A band of frogs plays in the bandstand at the back of a paddle
 ## steamer's cabin as it goes down an autumn river at sundown, and the crowd on the stern deck
-## dances. The songs are in music/ (with their beat maps: see tools/analyse_music.sh); everything
-## moves to them.
+## dances. The songs are any the user brings aboard on the desk (SongImport); everything moves to them.
 ##
 ## This puts it all together: the River and the Riverboat, the band (a Frog for each part
 ## TrackPlayer reads off the music, a singer and a conductor), the Crowd, the Director's camera
@@ -111,6 +110,8 @@ func _ready() -> void:
 		desk.frogs.append(["Dancer %d" % (n + 1), crowd.frogs[n]])
 	add_child(desk)
 	desk.setup()
+	if player.tracks.is_empty():
+		desk.show_songs()
 	_start_render()
 
 
@@ -137,7 +138,8 @@ func _start_render() -> void:
 	render = data
 	hud.visible = false
 	desk.apply_render(render)
-	player.play(int(render.get("song", 0)), float(render.get("from", 0.0)))
+	var song := player.find(str(render.get("song_file", "")))
+	player.play(song if song >= 0 else int(render.get("song", 0)), float(render.get("from", 0.0)))
 
 
 ## Who looks at whom: the crowd at the bandstand (whoever has the tune most of all, or the singer)
@@ -204,4 +206,4 @@ func _on_finished() -> void:
 
 
 func _no_songs() -> void:
-	hud.show_title({"title": "No songs aboard yet", "artist": "Put songs in music/ and run tools/analyse_music.sh"})
+	hud.show_title({"title": "No songs aboard yet", "artist": "Add some on the desk: Song, + Add songs"})

@@ -92,6 +92,7 @@ var _tabs: TabContainer
 var _held := {}
 var _list: ItemList
 var _songs: ItemList
+var _song_import: SongImport
 var _status: Label
 var _target_index := 0
 var _target_buttons := {}
@@ -660,17 +661,56 @@ func _option(box: Container, items: Array, picked: Callable) -> OptionButton:
 # --- The tabs ---
 
 func _song_tab(box: VBoxContainer) -> void:
-	var songs := _section(box, "Songs", "Click one to play it.")
+	var songs := _section(box, "Songs", "Any song file from this phone, brought aboard and kept in this browser: tap one to play it." if OS.has_feature("web")
+			else "Any song files, brought aboard and kept in user://songs: click one to play it.")
+	var row := HBoxContainer.new()
+	songs.add_child(row)
+	_button(row, "+ Add songs...", func() -> void: _song_import.pick(), "Pick song files in a file browser: the band learns each one's beat")
+	_button(row, "Remove", _remove_song, "Takes the chosen song off the boat")
 	_songs = ItemList.new()
-	_songs.custom_minimum_size.y = 260
+	_songs.custom_minimum_size.y = 220
 	_songs.focus_mode = Control.FOCUS_NONE
 	_songs.item_clicked.connect(func(index: int, _at: Vector2, _button_index: int) -> void: player.play(index))
 	songs.add_child(_songs)
+	_song_import = SongImport.new()
+	_song_import.said.connect(func(text: String) -> void: _status.text = text)
+	_song_import.failed.connect(func(text: String) -> void: _status.text = text)
+	_song_import.added.connect(func(name: String) -> void:
+		player.scan()
+		_refresh_songs()
+		var track: Dictionary = player.tracks[player.find(name)]
+		_status.text = "Aboard: %s (%.0f bpm, %d/4)." % [track.title, float(track.bpm), int(JSON.parse_string(FileAccess.get_file_as_string(SongImport.DIR.path_join(track.map))).get("meter", 4))]
+		if not player.playing:
+			player.play(player.find(name)))
+	add_child(_song_import)
 	var shown := _section(box, "On screen")
 	_toggle_box(shown, "Show each song's title as it starts", true, func(on: bool) -> void:
 		if hud:
 			hud.titles = on)
-	_note(shown, "Songs go in music/, analysed by tools/analyse_music.sh.")
+
+
+## The desk open at the Song tab (when there are no songs yet).
+func show_songs() -> void:
+	show_panel(true)
+	_tabs.current_tab = 0
+	_status.text = "No songs aboard yet: + Add songs to pick some."
+
+
+## Takes the song chosen in the list off the boat (its file and its map).
+func _remove_song() -> void:
+	var picked := _songs.get_selected_items()
+	if picked.is_empty():
+		_status.text = "Choose a song in the list first."
+		return
+	var track: Dictionary = player.tracks[picked[0]]
+	if picked[0] == player.index:
+		player.stop()
+		player.index = -1
+		player.track = {}
+	SongImport.remove(track.song)
+	player.scan()
+	_refresh_songs()
+	_status.text = "Took %s off the boat." % track.title
 
 
 func _camera_tab(box: VBoxContainer) -> void:
@@ -985,6 +1025,11 @@ func setup() -> void:
 		button.pressed.connect(func() -> void: _pick_target(index))
 		who.add_child(button)
 		_target_buttons[k] = button
+	_refresh_songs()
+
+
+## The song lists (the Song tab's and the Render tab's) as the player has them.
+func _refresh_songs() -> void:
 	_songs.clear()
 	_song_pick.clear()
 	for track: Dictionary in player.tracks:
@@ -1805,7 +1850,7 @@ func _render() -> void:
 	var take := "_render"
 	save_take(take)
 	keys = saved_keys
-	var settings := {"song": song, "from": _from.value, "to": _to.value, "camera": camera, "shot": director.mode, "take": take, "desk": state()}
+	var settings := {"song": song, "song_file": player.tracks[song].song if song < player.tracks.size() else "", "from": _from.value, "to": _to.value, "camera": camera, "shot": director.mode, "take": take, "desk": state()}
 	var file := FileAccess.open("user://render.json", FileAccess.WRITE)
 	file.store_string(JSON.stringify(settings))
 	file.close()

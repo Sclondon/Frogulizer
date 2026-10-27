@@ -13,3 +13,9 @@ override.cfg
 # Reference stills (Over the Garden Wall) and debug screenshots: not for the public repo
 /inpsirationArt/
 /modelDebugimages/
+
+# Songs: brought aboard in the game (user://songs), never in the repo or the web build
+/music/
+*.mp3
+*.m4a
+*.flac

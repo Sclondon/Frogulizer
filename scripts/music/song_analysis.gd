@@ -1,15 +1,14 @@
-extends SceneTree
-## Works out what the band does to a song, ahead of time, from its sound: the
-## beats (and which are the first of a bar), how loud it is in each of six bands
-## of pitch over time, and where each band is struck. Writes it beside the song
-## as music/<name>.beats.json, which TrackPlayer reads as the song plays.
-## (Done ahead because a browser plays the song outside Godot's mixer, where
-## nothing can listen to it.)
+class_name SongAnalysis
+extends RefCounted
+## Works out what the band does to a song from its sound: the beats (and which are the first of a
+## bar), how loud it is in each of six bands of pitch over time, and where each band is struck. Made
+## once, when the song is brought aboard (SongImport), and kept beside it as its beat map, which
+## TrackPlayer reads as the song plays. (Done ahead because a browser plays the song outside Godot's
+## mixer, where nothing can listen to it.)
 ##
-## Run by tools/analyse_music.sh, which first has ffmpeg cut the song into the
-## bands' loudness envelopes (BANDS, at RATE a second, as raw 32-bit floats):
-##   godot --headless --path . --script tools/analyse_music.gd -- <envelope folder> <out.json> <song file> <title> <artist>
-##   godot --headless --path . --script tools/analyse_music.gd -- --manifest     (lists every analysed song in music/tracks.json)
+## It is given the bands' loudness envelopes (BANDS, at RATE a second), which ffmpeg (on the computer)
+## or the browser's Web Audio (on the web) cut from the song: see SongImport.
+
 
 ## The bands, as ffmpeg cuts them (Hz): sub and kick; tuba and bass; the middle
 ## (banjo, accordion, voices); the upper middle (trumpet, clarinet); bite (the
@@ -25,29 +24,14 @@ const FASTEST := 190.0
 const LIKELY := 105.0
 
 
-func _initialize() -> void:
-	var args := OS.get_cmdline_user_args()
-	if args.size() >= 1 and args[0] == "--manifest":
-		_manifest()
-	elif args.size() >= 3:
-		_analyse(args[0], args[1], args[2], args[3] if args.size() > 3 else "", args[4] if args.size() > 4 else "")
-	else:
-		printerr("usage: -- <envelope folder> <out.json> <song> [title] [artist]  |  -- --manifest")
-	quit()
-
-
-func _analyse(folder: String, out_path: String, song: String, title: String, artist: String) -> void:
-	var env: Array[PackedFloat32Array] = []
-	# (the six bands, the whole, then the voice's middle low and high, and the sides' low and high)
-	for k in BANDS.size() + 5:
-		var bytes := FileAccess.get_file_as_bytes(folder.path_join("b%d.raw" % k))
-		env.append(bytes.to_float32_array())
+## The beat map of a song from its envelopes: the six bands, the whole, then the voice's middle low
+## and high, and the sides' low and high. Empty if the song is too short.
+static func analyse(env: Array[PackedFloat32Array], song: String, title: String, artist: String) -> Dictionary:
 	var frames := env[BANDS.size()].size()
 	for k in env.size():
 		env[k].resize(frames)
 	if frames < RATE * 2:
-		printerr("too short: ", song)
-		return
+		return {}
 	var seconds := float(frames) / RATE
 
 	# Loudness per band, on a log scale, as a share of how loud that band gets in this song
@@ -91,8 +75,8 @@ func _analyse(folder: String, out_path: String, song: String, title: String, art
 
 	var data := {
 		"version": 1,
-		"song": song.get_file(),
-		"title": title if title != "" else song.get_file().get_basename().replace("_", " "),
+		"song": song,
+		"title": title if title != "" else song.get_basename().replace("_", " "),
 		"artist": artist,
 		"seconds": snappedf(seconds, 0.01),
 		"bpm": snappedf(bpm, 0.1),
@@ -118,17 +102,13 @@ func _analyse(folder: String, out_path: String, song: String, title: String, art
 		data.bands.append(Marshalls.raw_to_base64(packed))
 	for k in BANDS.size():
 		data.onsets.append(_peaks(flux[k]))
-	var file := FileAccess.open(out_path, FileAccess.WRITE)
-	file.store_string(JSON.stringify(data))
-	file.close()
-	print("ANALYSED %s: %.1f s, %.1f bpm, %d/4 time from beat %d, %d beats, onsets %s" % [song.get_file(), seconds, bpm, bar.x, bar.y, beats.size(),
-			str(data.onsets.map(func(o: Array) -> int: return o.size()))])
+	return data
 
 
 ## The voice, as well as it can be told from the mix: how much louder the middle of the stereo
 ## picture is than its sides, in the voice's low and high bands, eased so a mouth can follow it
 ## (0..1); and its vowel, from where that sound sits, 0 (low: round, O and U) to 1 (high: E and I).
-func _voice(env: Array[PackedFloat32Array], frames: int) -> Array[PackedFloat32Array]:
+static func _voice(env: Array[PackedFloat32Array], frames: int) -> Array[PackedFloat32Array]:
 	var low := PackedFloat32Array()
 	var high := PackedFloat32Array()
 	low.resize(frames)
@@ -159,7 +139,7 @@ func _voice(env: Array[PackedFloat32Array], frames: int) -> Array[PackedFloat32A
 	return [voice, vowel]
 
 
-func _packed(values: PackedFloat32Array, step: int) -> PackedByteArray:
+static func _packed(values: PackedFloat32Array, step: int) -> PackedByteArray:
 	var packed := PackedByteArray()
 	packed.resize(values.size() / step)
 	for i in packed.size():
@@ -172,7 +152,7 @@ func _packed(values: PackedFloat32Array, step: int) -> PackedByteArray:
 
 ## The beat's length in frames: the lag at which the onsets repeat most strongly,
 ## weighted towards likely tempos (after Ellis, "Beat tracking by dynamic programming").
-func _tempo(onset: PackedFloat32Array) -> float:
+static func _tempo(onset: PackedFloat32Array) -> float:
 	var n := onset.size()
 	var mean := 0.0
 	for v in onset:
@@ -207,7 +187,7 @@ func _tempo(onset: PackedFloat32Array) -> float:
 
 ## Beats by dynamic programming: each frame's best score is its onset plus the
 ## best earlier beat about one period back, less a cost for straying from the period.
-func _track(onset: PackedFloat32Array, period: float) -> Array[int]:
+static func _track(onset: PackedFloat32Array, period: float) -> Array[int]:
 	var n := onset.size()
 	var score := PackedFloat32Array()
 	score.resize(n)
@@ -216,12 +196,16 @@ func _track(onset: PackedFloat32Array, period: float) -> Array[int]:
 	var tightness := 100.0
 	var near := int(roundf(period * 0.5))
 	var far := int(roundf(period * 2.0))
+	# (the cost of a gap of so many frames, worked out once)
+	var cost := PackedFloat32Array()
+	cost.resize(far + 1)
+	for gap in range(1, far + 1):
+		cost[gap] = tightness * pow(log(gap / period), 2.0)
 	for t in n:
 		var best := 0.0
 		var from := -1
 		for p in range(maxi(t - far, 0), maxi(t - near, 0)):
-			var gap := float(t - p) / period
-			var s := score[p] - tightness * pow(log(gap), 2.0)
+			var s := score[p] - cost[t - p]
 			if from < 0 or s > best:
 				best = s
 				from = p
@@ -242,7 +226,7 @@ func _track(onset: PackedFloat32Array, period: float) -> Array[int]:
 
 ## The metre (3 or 4) and which beat is the first downbeat: the one whose beats
 ## the low end strikes hardest against the rest.
-func _bars(beats: Array[int], low: PackedFloat32Array, bass: PackedFloat32Array) -> Vector2i:
+static func _bars(beats: Array[int], low: PackedFloat32Array, bass: PackedFloat32Array) -> Vector2i:
 	var hits := PackedFloat32Array()
 	for b in beats:
 		var s := 0.0
@@ -276,7 +260,7 @@ func _bars(beats: Array[int], low: PackedFloat32Array, bass: PackedFloat32Array)
 
 ## Where a band is struck: peaks of its onset strength over a threshold that
 ## follows the music, at least 70 ms apart. [[seconds, strength 0..1], ...]
-func _peaks(flux: PackedFloat32Array) -> Array:
+static func _peaks(flux: PackedFloat32Array) -> Array:
 	var n := flux.size()
 	var top := _percentile(flux, 0.995)
 	var found := []
@@ -302,13 +286,13 @@ func _peaks(flux: PackedFloat32Array) -> Array:
 	return found
 
 
-func _percentile(values: PackedFloat32Array, share: float) -> float:
+static func _percentile(values: PackedFloat32Array, share: float) -> float:
 	var sorted := values.duplicate()
 	sorted.sort()
 	return sorted[clampi(int(share * (sorted.size() - 1)), 0, sorted.size() - 1)]
 
 
-func _smooth(values: PackedFloat32Array, radius: int) -> void:
+static func _smooth(values: PackedFloat32Array, radius: int) -> void:
 	var copy := values.duplicate()
 	for i in values.size():
 		var s := 0.0
@@ -319,7 +303,7 @@ func _smooth(values: PackedFloat32Array, radius: int) -> void:
 		values[i] = s / c
 
 
-func _normalise(values: PackedFloat32Array) -> void:
+static func _normalise(values: PackedFloat32Array) -> void:
 	var mean := 0.0
 	for v in values:
 		mean += v
@@ -330,21 +314,3 @@ func _normalise(values: PackedFloat32Array) -> void:
 	spread = sqrt(spread / values.size())
 	for i in values.size():
 		values[i] = (values[i] - mean) / maxf(spread, 1e-6)
-
-
-## music/tracks.json: every song that has been analysed, in name order.
-func _manifest() -> void:
-	var tracks := []
-	var dir := DirAccess.open("res://music")
-	if dir == null:
-		printerr("no music folder")
-		return
-	var names := Array(dir.get_files()).filter(func(f: String) -> bool: return f.ends_with(".beats.json"))
-	names.sort()
-	for name: String in names:
-		var data: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://music/" + name))
-		tracks.append({"song": data.song, "map": name, "title": data.title, "artist": data.artist, "seconds": data.seconds, "bpm": data.bpm})
-	var file := FileAccess.open("res://music/tracks.json", FileAccess.WRITE)
-	file.store_string(JSON.stringify({"tracks": tracks}, "\t"))
-	file.close()
-	print("LISTED %d songs" % tracks.size())

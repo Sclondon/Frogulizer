@@ -1,7 +1,7 @@
 class_name TrackPlayer
 extends Node
-## Plays the songs in music/ and reads their beat maps (tools/analyse_music.gd)
-## as they play, keeping Groove up to date and telling the band when its part
+## Plays the songs brought aboard (SongImport: kept in user://songs, never in the project) and reads
+## their beat maps (SongAnalysis) as they play, keeping Groove up to date and telling the band when its part
 ## of the sound is struck.
 ##
 ## Who plays what is read off the bands of pitch: the tuba is the low end, the
@@ -17,7 +17,7 @@ signal started(track: Dictionary)
 signal phrase(index: int)
 signal finished
 
-## Which bands (see BANDS in tools/analyse_music.gd) each part plays from: its
+## Which bands (see SongAnalysis.BANDS) each part plays from: its
 ## loudness is the loudest of them, and it is struck when any of them is.
 const PARTS := {
 	"tuba": [1], "kick": [0], "cymbal": [5], "banjo": [2, 4], "accordion": [2],
@@ -57,9 +57,28 @@ func _ready() -> void:
 	_player.playback_type = AudioServer.PLAYBACK_TYPE_STREAM
 	_player.finished.connect(_on_finished)
 	add_child(_player)
-	var listed: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://music/tracks.json")) if FileAccess.file_exists("res://music/tracks.json") else null
-	if listed is Dictionary:
-		tracks = listed.get("tracks", [])
+	scan()
+
+
+## The songs aboard, by title: {song, map, title, artist, seconds, bpm} each.
+func scan() -> void:
+	var playing_now := str(track.get("song", ""))
+	tracks.clear()
+	for found: Array in SongImport.aboard():
+		var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(SongImport.DIR.path_join(found[1])))
+		if data is Dictionary:
+			tracks.append({"song": found[0], "map": found[1], "title": data.get("title", found[0]), "artist": data.get("artist", ""),
+					"seconds": data.get("seconds", 0.0), "bpm": data.get("bpm", 0.0)})
+	tracks.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return str(a.title).naturalnocasecmp_to(str(b.title)) < 0)
+	index = find(playing_now)
+
+
+## Where the song with this file name is in `tracks`, or -1.
+func find(song: String) -> int:
+	for k in tracks.size():
+		if tracks[k].song == song:
+			return k
+	return -1
 
 
 func play(which: int, from := 0.0) -> void:
@@ -67,7 +86,7 @@ func play(which: int, from := 0.0) -> void:
 		return
 	index = posmod(which, tracks.size())
 	track = tracks[index]
-	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://music/" + String(track.map)))
+	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(SongImport.DIR.path_join(track.map)))
 	if not data is Dictionary:
 		push_warning("no beat map for " + str(track.song))
 		return
@@ -90,7 +109,7 @@ func play(which: int, from := 0.0) -> void:
 	_last_raw = 0.0
 	_stuck = 0.0
 	_clock_started = false
-	_player.stream = load("res://music/" + String(track.song))
+	_player.stream = SongImport.stream(track.song)
 	_player.play(from)
 	time = from
 	_last_raw = from

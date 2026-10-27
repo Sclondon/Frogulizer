@@ -6,8 +6,9 @@ Read `README.md` first. A music visualiser: a frog band on a riverboat, a dancin
 
 - A music visualiser: anthropomorphic frogs play on a riverboat and the crowd reacts. Inspiration art in `inpsirationArt/`
   (Over the Garden Wall's riverboat episode). Make original frogs and tunes in that spirit, never copies of its characters.
-- **The songs are real songs the user downloads** into `music/`. Do not compose or synthesise music for it. The band is
-  driven by analysing the recording (`tools/analyse_music.sh`), not by note data.
+- **The songs are real songs the user brings aboard in the game** (Song tab, + Add songs: a file browser), kept in
+  `user://songs`. **Never put songs in the repo or the web build** (the user, 2026-10-27). Do not compose or synthesise
+  music for it. The band is driven by analysing the recording (`SongImport`, `SongAnalysis`), not by note data.
 - New anthro frog models whose animation is as good as the Character Studio / Outside boy's, and compatible with it.
   They are built on his skeleton and moved by his `CharacterRig`. Keep them on that contract
   (`tools/build_figure_template.py`): don't give them clip animations or a skeleton of their own.
@@ -23,16 +24,16 @@ Read `README.md` first. A music visualiser: a frog band on a riverboat, a dancin
   `tools/*_sheets.gd`, and `woodland/`. Change frog things in the frog files (`frog_rig.gd` overrides `_pose_extra`).
   An improvement to the shared rig belongs in Character Studio and goes back to GameCommon from there.
 - `scripts/train_smoke.gd` is Outside's, copied unchanged.
-- `music/*.beats.json` and `music/tracks.json` are generated: re-run `tools/analyse_music.sh`, don't hand-edit maps.
-  `tracks.json` titles may be edited.
-- The web export includes `music/*.json` through `include_filter`. A new kind of data file needs adding there.
+- Beat maps (`user://songs/<song>.beats.json`) are generated: bring the song aboard again rather than hand-edit one.
+  To test with songs, `tools/add_songs.gd` adds files from the command line (Close Encounters' One Man Band tunes will do).
+- The web listening (`SongImport._WEB`, Web Audio) must cut the same bands as the ffmpeg graph (`SongImport._graph`).
 - Godot's front faces are clockwise. Shader variables must not be called `dot`, `length` and so on: a shader that
   fails to compile can draw nothing without printing an error.
 
 ## Where things are tuned
 
-- The bands and who plays which: `TrackPlayer.PARTS`, `LEADS`, `PHRASE`; the analysis: `tools/analyse_music.gd`
-  (`BANDS` must match the ffmpeg graph in `analyse_music.sh`; `LIKELY` tempo prior; peak thresholds in `_peaks`).
+- The bands and who plays which: `TrackPlayer.PARTS`, `LEADS`, `PHRASE`; the analysis: `SongAnalysis`
+  (`SongImport.CUTS`/`VOICE` are the bands' edges; `LIKELY` tempo prior; peak thresholds in `_peaks`).
   Octave errors in tempo (half or double) happen; the instruments follow the hits, not the beat.
 - Band positions: `main.gd` `PLACES`; the instruments' layout is in the frog's model space (`Instrument`, with
   `MOUTH`); hands go to the instrument's `grips`.
@@ -52,8 +53,8 @@ Read `README.md` first. A music visualiser: a frog band on a riverboat, a dancin
 ## State (2026-10-27)
 
 Repo github.com/Sclondon/Frogulizer, Pages serves `build/`. `inpsirationArt/` (Over the Garden Wall stills) and
-`modelDebugimages/` are kept out of git: the repo is public. So is everything in `music/` once exported.
+`modelDebugimages/` are kept out of git: the repo is public. No songs in it or in the build.
 
 Not done yet / ideas: a far crowd as one MultiMesh (ScenicRoute's Velvet Moth crowd shader); dusk and night across a
-set of songs, with lanterns; a live analyser for songs dropped in without a map (desktop only); frogs singing along to
+set of songs, with lanterns; frogs singing along to
 vocals; clothes (on hold until the body is right).

@@ -25,25 +25,25 @@ carries the keys, the frame, the lens and the look.
 
 ## Songs
 
-The songs are real recordings, kept in `music/` (`.mp3`, `.ogg` or `.wav`). Each needs a **beat map** made from it
-ahead of time:
+Songs are not part of the project: **any song file can be brought aboard in the game**. On the desk's Song tab,
+**+ Add songs...** opens a file browser (the computer's own; on a phone, its file picker), and each song picked is
+listened to once for its **beat map** and kept, with the map, in `user://songs` (in the browser, the page's own
+storage). **Remove** takes the chosen one off again. `.mp3`, `.ogg` and `.wav` are kept as they are; anything else the
+computer's ffmpeg or the browser can read (`.m4a`, `.flac`...) is kept as a `.wav` made from it. With no songs aboard
+the desk opens at the Song tab.
 
-```
-sh tools/analyse_music.sh            # every song without an up-to-date map
-sh tools/analyse_music.sh --force    # all of them again
-```
-
-That uses the ffmpeg in `scareathon/trailer` to cut the song into six bands of pitch (as loudness over time), and
-`tools/analyse_music.gd` (headless Godot) to find the beats, the tempo, the bar lines (3 or 4 to the bar), and where
-each band is struck. It writes `music/<song>.beats.json` beside the song and lists every song in
-`music/tracks.json`, with the title and artist from the song's tags (or its file name). Edit `tracks.json` to fix a
-title or change the order. Only songs listed there are played.
+The listening (`scripts/music/song_import.gd`) cuts the song into six bands of pitch as loudness over time: on the
+computer with the ffmpeg in `scareathon/trailer`, in the browser with Web Audio's filters (the same ones; a 4-minute
+song takes about 4 s in a desktop browser). `scripts/music/song_analysis.gd` then finds the beats, the tempo, the bar
+lines (3 or 4 to the bar), where each band is struck, and roughly where the voice is. The title and who it is by come
+from the song's tags (on the computer) or its file name (`Artist - Title.mp3`).
 
 The analysis is done ahead of time because a browser plays the song outside Godot's mixer, where nothing can listen
-to it as it plays.
+to it as it plays. To bring songs aboard from the command line (a whole folder at once):
 
-`music/test_*.wav` are three short placeholder tunes from Close Encounters (made in One Man Band, our own). Replace
-them with real songs, then re-run the script.
+```
+godot --headless --path . --script tools/add_songs.gd -- <song or folder>...
+```
 
 How the band is read off the sound (`scripts/music/track_player.gd`, `PARTS`):
 
@@ -100,6 +100,8 @@ and baton in code.
 | File | What |
 | --- | --- |
 | `main.tscn`, `scripts/main.gd` | Puts it together: river, boat, band, crowd, camera, HUD, the song player |
+| `scripts/music/song_import.gd` | + Add songs: the file browser, listening to a song (ffmpeg, or Web Audio in the browser), keeping it in `user://songs` |
+| `scripts/music/song_analysis.gd` | A song's beat map from its bands: beats, tempo, bars, where each band is struck, the voice |
 | `scripts/music/track_player.gd` | Plays the songs, reads their beat maps, keeps `Groove` up to date, tells the band when it is struck |
 | `scripts/music/groove.gd` | What the music is doing now (beat, tempo, loudness, each part's level, who has the tune), for everything that moves to it |
 | `scripts/boat.gd` | The riverboat, built in code: hull, deck (`shaders/deck.gdshader`), railings, bandstand with bulbs (`shaders/bulb.gdshader`), paddlewheels, cabin, pilot house, stacks with smoke (`scripts/train_smoke.gd`, from Outside), bunting (`shaders/bunting.gdshader`) |
@@ -122,13 +124,14 @@ godot --audio-driver Dummy --path . --resolution 1280x720 --script tests/bench.g
 
 ```
 godot --audio-driver Dummy --path . --resolution 390x844 --script tests/touch.gd
+godot --audio-driver Dummy --path . --resolution 390x844 --script tests/songs.gd
 ```
 
 `tests/shots.gd` plays the show and saves a picture of every camera shot with the frame rate. `tests/bench.gd` puts
 the band and one dancer of each kind on a plain floor. `tests/touch.gd` checks the desk on a phone (its layout, a
-one-finger drag, a pinch, a take copied and pasted) and ends PASSED or FAILED. `--audio-driver Dummy` keeps them quiet.
+one-finger drag, a pinch, a take copied and pasted) and `tests/songs.gd` brings a song aboard, plays it and takes it
+off (it needs a song aboard already to copy); both end PASSED or FAILED. The shots and the bench play the songs aboard. `--audio-driver Dummy` keeps them quiet.
 
 Web build: `godot --headless --path . --export-release "Web" build/index.html`, committed in `build/` (GitHub
 Pages serves it: sclondon.github.io/Frogulizer/build/). Fonts are bundled in `fonts/` (a browser has no others).
-**Everything in `music/` goes into the web build, which is public**: only put songs there that may be shared, or
-keep them out of the export before pushing.
+No songs are in the repo or the web build (`music/`, `*.mp3`... are ignored and kept out of the export).
