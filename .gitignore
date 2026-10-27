@@ -9,3 +9,7 @@ __pycache__/
 # A render's size, written by the camera desk for one run
 override.cfg
 /renders/
+
+# Reference stills (Over the Garden Wall) and debug screenshots: not for the public repo
+/inpsirationArt/
+/modelDebugimages/

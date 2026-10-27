@@ -12,20 +12,21 @@ extends Camera3D
 ## moves: they go with it), and how wide a view it keeps (metres across at what it looks at).
 ## "bank": the eye is put on the shore and stays there as the boat goes past.
 const SHOTS := {
-	"audience": {"from": Vector3(-2.2, 3.0, -15.0), "to": Vector3(1.8, 2.8, -13.5), "look": Vector3(0.0, 2.9, -0.5), "width": 9.5},
-	"stage": {"from": Vector3(-1.2, 3.9, 0.9), "to": Vector3(1.2, 3.7, 0.7), "look": Vector3(0.0, 2.0, -16.0), "width": 12.0},
-	"floor": {"from": Vector3(1.0, 2.8, -9.0), "to": Vector3(-1.0, 2.7, -8.0), "look": Vector3(0.0, 2.8, -0.5), "width": 7.5},
-	"crane": {"from": Vector3(14.0, 15.0, -28.0), "to": Vector3(16.0, 13.0, -16.0), "look": Vector3(0.0, 2.0, -5.0), "width": 26.0},
-	"bank": {"from": Vector3(19.5, 4.6, 45.0), "to": Vector3(19.5, 4.6, 45.0), "look": Vector3(0.0, 4.0, 0.0), "width": 38.0, "bank": true},
+	"audience": {"from": Vector3(-2.2, 3.0, -11.0), "to": Vector3(1.8, 2.8, -10.2), "look": Vector3(0.0, 2.9, -0.5), "width": 8.0},
+	"stage": {"from": Vector3(-1.2, 3.9, 0.9), "to": Vector3(1.2, 3.7, 0.7), "look": Vector3(0.0, 2.0, -10.0), "width": 10.0},
+	"floor": {"from": Vector3(1.0, 3.6, -6.4), "to": Vector3(-1.0, 3.5, -6.0), "look": Vector3(0.0, 2.8, -0.5), "width": 6.5},
+	"crane": {"from": Vector3(22.0, 17.0, -30.0), "to": Vector3(25.0, 15.0, -18.0), "look": Vector3(0.0, 2.0, -5.0), "width": 30.0},
+	"bank": {"from": Vector3(33.5, 4.6, 45.0), "to": Vector3(33.5, 4.6, 45.0), "look": Vector3(0.0, 4.0, 0.0), "width": 44.0, "bank": true},
 	"wheel": {"from": Vector3(10.0, 0.9, -5.0), "to": Vector3(10.4, 1.2, -2.0), "look": Vector3(4.5, 2.4, 9.0), "width": 15.0},
 	"broadside": {"from": Vector3(12.5, 1.5, -10.0), "to": Vector3(12.5, 1.7, 0.0), "look": Vector3(0.0, 3.5, -3.0), "width": 32.0},
-	"bow": {"from": Vector3(0.0, 6.6, 21.0), "to": Vector3(0.0, 7.0, 19.0), "look": Vector3(0.0, 4.0, -10.0), "width": 18.0},
+	"astern": {"from": Vector3(7.0, 17.0, 10.0), "to": Vector3(5.0, 16.0, 4.0), "look": Vector3(0.0, 0.0, -26.0), "width": 34.0},
+	"bow": {"from": Vector3(-1.4, 8.7, 15.8), "to": Vector3(1.2, 8.8, 15.2), "look": Vector3(0.0, 8.2, 9.8), "width": 4.5},
 	"conductor": {"width": 3.6},
 	"lead": {"width": 2.6},
 	"singer": {"width": 2.4},
 }
 ## Which shots come up in turn (the soloist, the singer and the conductor are cut to by the music).
-const ROTATION := ["audience", "stage", "floor", "singer", "crane", "audience", "bank", "conductor", "broadside", "wheel", "stage", "bow"]
+const ROTATION := ["audience", "stage", "floor", "singer", "crane", "audience", "bank", "conductor", "broadside", "wheel", "stage", "astern", "bow"]
 
 ## "auto" cuts by itself; otherwise the name of one shot to hold; "manual" leaves the camera alone.
 var mode := "auto"
@@ -37,6 +38,12 @@ var conductor: Frog
 var singer: Frog
 ## The part of the window that is the film (the camera desk's frame), or empty for all of it.
 var crop := Rect2()
+## How it cuts by itself (the camera desk sets these): which shots come up in turn, how long each is
+## held (a share of the usual), whether it cuts on a new phrase, and to whoever has the tune.
+var shot_list: Array = ROTATION.duplicate()
+var pace := 1.0
+var cut_on_phrase := true
+var cut_to_soloist := true
 
 var _shot := "audience"
 var _held := 0.0
@@ -57,22 +64,28 @@ func _ready() -> void:
 ## Cuts to a shot by name (or to the next in turn with "").
 func cut_to(shot := "") -> void:
 	if shot == "":
-		_turn = (_turn + 1) % ROTATION.size()
-		shot = ROTATION[_turn]
+		var turns: Array = shot_list if not shot_list.is_empty() else ROTATION
+		_turn = (_turn + 1) % turns.size()
+		shot = turns[_turn]
 	_shot = shot
 	_held = 0.0
-	_length = _rng.randf_range(7.0, 12.0) * (1.4 if Groove.energy < 0.3 else 1.0)
+	_length = _rng.randf_range(7.0, 12.0) * (1.4 if Groove.energy < 0.3 else 1.0) * pace
 	if SHOTS[shot].get("bank", false) and boat:
 		# (put on the shore ahead of the boat, which then goes past it)
 		_bank_eye = boat.to_global(SHOTS[shot].from)
 	_aim()
 
 
+## The shot it is on.
+func shot() -> String:
+	return _shot
+
+
 ## A new phrase of the music: cut (now and then to whoever has the tune).
 func on_phrase() -> void:
-	if mode != "auto" or _held < 3.0:
+	if mode != "auto" or _held < 3.0 * minf(pace, 1.0) or not cut_on_phrase:
 		return
-	if Groove.lead != _last_lead and band.has(Groove.lead) and _rng.randf() < 0.6:
+	if cut_to_soloist and Groove.lead != _last_lead and band.has(Groove.lead) and _rng.randf() < 0.6:
 		_last_lead = Groove.lead
 		cut_to("lead")
 	elif _rng.randf() < 0.75:

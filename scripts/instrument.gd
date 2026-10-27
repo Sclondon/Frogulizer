@@ -51,6 +51,8 @@ static func make(part: String) -> Instrument:
 			made._drums()
 		"conductor":
 			made._baton()
+		"helm":
+			made._helm()
 		_:
 			return null
 	made._shade()
@@ -232,6 +234,30 @@ func _baton() -> void:
 	parts.baton = baton
 	_tube(Vector3.ZERO, Vector3(0.0, 0.0, 0.3), 0.005, Color(0.96, 0.95, 0.9), baton)
 	_tube(Vector3(0.0, 0.0, -0.01), Vector3(0.0, 0.0, 0.04), 0.011, DARK_WOOD, baton)
+
+
+## The ship's wheel the captain steers by: on a post before him, spoked, with handles round its
+## rim, his hands on two of them. (It turns: `parts.wheel`.)
+func _helm() -> void:
+	anchor = &"root"
+	var centre := Vector3(0.0, 0.66, 0.3)
+	_box(Vector3(0.0, 0.33, 0.36), Vector3(0.1, 0.66, 0.1), DARK_WOOD)
+	_disc(centre + Vector3(0.0, 0.0, 0.05), 0.04, 0.06, BRASS, Vector3.BACK)
+	var wheel := Node3D.new()
+	wheel.position = centre
+	add_child(wheel)
+	parts.wheel = wheel
+	var rim := _torus(Vector3.ZERO, Basis(Vector3.RIGHT, PI / 2), 0.17, 0.2, WOOD)
+	rim.reparent(wheel, false)
+	for k in 8:
+		var a := TAU * k / 8.0
+		var way := Vector3(cos(a), sin(a), 0.0)
+		_tube(Vector3.ZERO, way * 0.27, 0.012, WOOD, wheel)
+		_tube(way * 0.2, way * 0.28, 0.018, DARK_WOOD, wheel)
+	_grip("l", Vector3(0.16, 0.09, -0.02), Vector3(1.0, -0.8, -0.3))
+	_grip("r", Vector3(-0.16, 0.09, -0.02), Vector3(-1.0, -0.8, -0.3))
+	for hand: String in ["l", "r"]:
+		(grips[hand] as Node3D).reparent(wheel, false)
 
 
 # --- Shapes ---

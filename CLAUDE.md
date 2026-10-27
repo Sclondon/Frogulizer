@@ -40,12 +40,20 @@ Read `README.md` first. A music visualiser: a frog band on a riverboat, a dancin
 - Shots: `Director.SHOTS`, `ROTATION`.
 - Look: `River._air` (fog, exposure, sun), `River._water`, `Riverboat` colours.
 
+## Who it is for
+
+- The desktop app is the user's tool for making music-video edits (films rendered by the camera desk). Quality first there.
+- The web build (2026-10-27) is so the user can set shots up **from their phone**: the same camera desk laid out for a
+  phone, takes copied as text to the computer to render. It is a secret cabinet on the arcade, code **FROG**. In a
+  browser `main.gd` runs `lite` (fewer frogs, 3D at about 1.5 browser pixels); `?full` turns that off. Scripts run
+  about 4x slower in the browser than natively: about 25-34 fps on a desktop browser with `lite`.
+- Every control must have an on-screen button; touch must work (`tests/touch.gd`).
+
 ## State (2026-10-27)
 
-First version made in one session. Everything runs (about 65 fps on the desktop at 1280x720 and 540x1100). It was
-checked in pictures at both sizes. The web build exports but has not been tried in a browser or on a phone. No git
-remote, not on the arcade, no preview film yet: the user decides.
+Repo github.com/Sclondon/Frogulizer, Pages serves `build/`. `inpsirationArt/` (Over the Garden Wall stills) and
+`modelDebugimages/` are kept out of git: the repo is public. So is everything in `music/` once exported.
 
 Not done yet / ideas: a far crowd as one MultiMesh (ScenicRoute's Velvet Moth crowd shader); dusk and night across a
-set of songs, with lanterns; picking a song from a list; a live analyser for songs dropped in without a map (desktop
-only, since the browser's sample playback has no bus effects); frogs singing along to vocals.
+set of songs, with lanterns; a live analyser for songs dropped in without a map (desktop only); frogs singing along to
+vocals; clothes (on hold until the body is right).

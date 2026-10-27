@@ -2,7 +2,7 @@
 // colour (vertex colour, times `tint`), lighter facing the sun and darker away,
 // warmed by the sun's colour. Unshaded, so it sits with the woodland's trees.
 shader_type spatial;
-render_mode unshaded, shadows_disabled;
+render_mode unshaded, shadows_disabled, cull_disabled;
 
 uniform vec3 sun_dir = vec3(0.18, 0.11, 1.0);
 uniform vec3 sun_color : source_color = vec3(1.0, 0.78, 0.5);

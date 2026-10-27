@@ -98,7 +98,24 @@ static func random(seed: int) -> Dictionary:
 		chosen["warts"] = "on"
 		colours["skin"] = (colours["skin"] as Color).lerp(Color(0.45, 0.40, 0.24), 0.4)
 	return {"parts": parts_for(chosen), "colours": colours, "size": size, "build": build, "body": body,
-			"head": rng.randf_range(0.92, 1.1), "droop": rng.randf_range(0.1, 0.5)}
+			"head": rng.randf_range(0.92, 1.1), "droop": rng.randf_range(0.1, 0.5), "mouth": rng.randf_range(0.85, 1.4)}
+
+
+## The captain at the wheel: a navy frock coat with gold buttons, a white cap.
+static func captain(seed: int) -> Dictionary:
+	var made := bandsman(seed)
+	made["parts"] = parts_for({"coat": "frock", "neck": "cravat", "legs": "trousers", "hat": "cap"})
+	made["colours"]["coat"] = Color(0.12, 0.15, 0.28)
+	made["colours"]["trim"] = BAND_GOLD
+	made["colours"]["vest"] = Color(0.92, 0.88, 0.80)
+	made["colours"]["tie"] = Color(0.92, 0.88, 0.80)
+	made["colours"]["hat"] = Color(0.95, 0.94, 0.9)
+	made["colours"]["band"] = Color(0.12, 0.15, 0.28)
+	made["colours"]["trousers"] = Color(0.12, 0.15, 0.28)
+	made["body"] = "squat"
+	made["size"] = 1.35
+	made["build"] = 1.12
+	return made
 
 
 ## The singer at the front of the bandstand: tails and a bow tie in the band's scarlet, no hat.
@@ -131,4 +148,4 @@ static func bandsman(seed: int, conductor := false) -> Dictionary:
 		colours["band"] = BAND_GOLD
 	return {"parts": parts_for(chosen), "colours": colours, "size": rng.randf_range(1.28, 1.42) if not conductor else 1.45,
 			"build": rng.randf_range(0.96, 1.1), "body": "round" if conductor else ["round", "squat", "slim"][rng.randi() % 3],
-			"head": rng.randf_range(0.95, 1.08), "droop": rng.randf_range(0.15, 0.35)}
+			"head": rng.randf_range(0.95, 1.08), "droop": rng.randf_range(0.15, 0.35), "mouth": rng.randf_range(0.85, 1.4)}

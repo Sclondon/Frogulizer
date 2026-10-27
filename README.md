@@ -6,13 +6,22 @@ that is playing: the band plays each instrument's part of it, the whole crowd da
 smokestacks puff on the beat, the bandstand's bulbs brighten, and the camera cuts on the phrases.
 
 After the riverboat frogs in *Over the Garden Wall* (the reference art is in `inpsirationArt/`). Godot 4.7, GL
-Compatibility, for the browser and phones first.
+Compatibility. The desktop app makes the films; the web build is for setting shots up on a phone.
 
-## Watching it
+## Watching it, and making films of it
 
-Tap (or press Space) to come aboard. That starts the first song, since browsers will not play sound until the page is
-touched. Tap again for the bar along the bottom: back a song, pause, on a song, and the camera (Auto cuts by itself;
-Crowd, Stage, Soloist, River and High hold one shot). Keys: Space pause, Left/Right or P/N songs, C camera.
+The camera desk has every control on screen: the bar along the bottom plays the songs (back, play and pause, on, a
+bar to scrub through the song, the volume) and shows which camera is on; the panel (☰ Desk) has the songs, the
+camera (Auto, held shots, Fly, Orbit, Follow, Path), the lens, the look, moves (keys of a camera move, saved as
+takes) and the render (a film of it, made frame by frame on the computer with Movie Maker and ffmpeg). Keys: Space
+pause, P/N songs, C next shot, K add a key, Tab the panel, H everything.
+
+**On a phone** (the web build, on the arcade behind the code FROG): the same desk, laid out at the phone's size
+(held upright, the panel is under the picture). One finger turns the orbit or looks round in Fly; two pinch in and
+out and slide. It is the lighter version (8 dancers and 2 passengers, the 3D drawn at about 1.5 pixels to the
+browser's; add `?full` to the address for everything). A browser cannot render films: make the move on the phone,
+**Copy take** (Moves), send the text to the computer, and **Paste take** into the desk there to render it. A take
+carries the keys, the frame, the lens and the look.
 
 ## Songs
 
@@ -97,7 +106,8 @@ and baton in code.
 | `scripts/river.gd` | The river going by: water (GameCommon `water`), banks (`shaders/ground.gdshader`), autumn woods, reeds, sky and falling leaves (GameCommon `painted-woodland`, in `woodland/`), hills |
 | `scripts/crowd.gd` | The dancers, couples, and watchers at the rails |
 | `scripts/director.gd` | The camera: shots, cuts on phrases, the same width on a phone held upright |
-| `scripts/hud.gd` | The title, the bar, the card to come aboard |
+| `scripts/hud.gd` | The song's title and artist as it starts |
+| `scripts/camera_desk.gd` | The camera desk: all the controls, on a computer or a phone, takes and renders |
 | `scripts/frog*.gd`, `scripts/instrument.gd` | The frogs (above) |
 | GameCommon's | `scripts/character_rig.gd`, `player.gd`, `figure.gd`, `toon.gd`, `settings.gd`, ... and `tools/build_character.py`, `figure_sheets.gd` ... (`godot/character-controller`); `scripts/water.gd` (`godot/water`); `woodland/` (`godot/painted-woodland`) |
 
@@ -110,7 +120,15 @@ godot --audio-driver Dummy --path . --resolution 540x1100 --script tests/shots.g
 godot --audio-driver Dummy --path . --resolution 1280x720 --script tests/bench.gd -- <folder>
 ```
 
-`tests/shots.gd` plays the show and saves a picture of every camera shot with the frame rate. `tests/bench.gd` puts
-the band and one dancer of each kind on a plain floor. `--audio-driver Dummy` keeps them quiet.
+```
+godot --audio-driver Dummy --path . --resolution 390x844 --script tests/touch.gd
+```
 
-Web build: `godot --headless --path . --export-release "Web" build/index.html`.
+`tests/shots.gd` plays the show and saves a picture of every camera shot with the frame rate. `tests/bench.gd` puts
+the band and one dancer of each kind on a plain floor. `tests/touch.gd` checks the desk on a phone (its layout, a
+one-finger drag, a pinch, a take copied and pasted) and ends PASSED or FAILED. `--audio-driver Dummy` keeps them quiet.
+
+Web build: `godot --headless --path . --export-release "Web" build/index.html`, committed in `build/` (GitHub
+Pages serves it: sclondon.github.io/Frogulizer/build/). Fonts are bundled in `fonts/` (a browser has no others).
+**Everything in `music/` goes into the web build, which is public**: only put songs there that may be shared, or
+keep them out of the export before pushing.

@@ -11,7 +11,7 @@ extends Node
 
 var boat: Riverboat
 ## How many dance.
-var count := 26
+var count := 14
 var frogs: Array[Frog] = []
 var _couples: Array = []   # [frog a, frog b, centre, angle]
 var _rng := RandomNumberGenerator.new()
@@ -39,8 +39,7 @@ func _ready() -> void:
 			_couples.append([frog, other, at + Vector3(0.0, 0.0, 0.4), _rng.randf() * TAU])
 			paired += 1
 	# Watchers along the rails, leaning and swaying
-	for spot: Array in [[Vector3(-4.1, Riverboat.DECK_Y, -6.0), -0.9], [Vector3(4.1, Riverboat.DECK_Y, -8.5), 0.9],
-			[Vector3(-4.0, Riverboat.DECK_Y, -13.0), -0.5], [Vector3(3.9, Riverboat.DECK_Y, -13.5), 0.4]]:
+	for spot: Array in [[Vector3(-4.1, Riverboat.DECK_Y, -6.0), -0.9], [Vector3(3.9, Riverboat.DECK_Y, 2.0), 1.2]]:
 		var frog := _frog(FrogLook.random(frogs.size() + 900), spot[0], spot[1])
 		frog.frog_rig().dance = "watch"
 
@@ -60,7 +59,7 @@ func _frog(look: Dictionary, at: Vector3, yaw: float) -> Frog:
 ## stern, a little jumbled.
 func _places() -> Array:
 	var out := []
-	var rows := [[-5.2, 5], [-6.6, 6], [-8.0, 6], [-9.4, 5], [-10.8, 5], [-12.4, 4]]
+	var rows := [[-4.4, 4], [-5.7, 4], [-7.0, 3], [-8.3, 3]]
 	for row: Array in rows:
 		var n: int = row[1]
 		for i in n:
@@ -87,8 +86,9 @@ func _process(delta: float) -> void:
 		var a: Frog = couple[0]
 		var b: Frog = couple[1]
 		var centre: Vector3 = couple[2]
-		var way := Vector3(sin(couple[3]), 0.0, cos(couple[3])) * 0.4
-		var going := Vector3(cos(couple[3]), 0.0, -sin(couple[3])) * 0.4 * speed
+		# (close enough to hold each other)
+		var way := Vector3(sin(couple[3]), 0.0, cos(couple[3])) * 0.3
+		var going := Vector3(cos(couple[3]), 0.0, -sin(couple[3])) * 0.3 * speed
 		a.drive(centre - way, -going, atan2(way.x, way.z))
 		b.drive(centre + way, going, atan2(-way.x, -way.z))
 	# A sudden swell in the music: those nearest the band gasp, the keenest panic

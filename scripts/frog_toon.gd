@@ -8,6 +8,8 @@ class_name FrogToon
 const TOON := preload("res://shaders/toon.gdshader")
 const OUTLINE := preload("res://shaders/outline.gdshader")
 const EYE := preload("res://shaders/eye.gdshader")
+const TONGUE := preload("res://shaders/tongue.gdshader")
+const MOUTH := preload("res://shaders/mouth.gdshader")
 ## Materials drawn with no ink line round them (they sit inside or on top of others).
 const NO_LINE := ["eye_l", "eye_r", "eyewhite", "pupil", "ink", "mouth", "tongue", "trim", "tie", "band"]
 ## Settings by material name.
@@ -42,6 +44,15 @@ static func apply(model: Node, colours := {}, outline := true) -> void:
 				made = ShaderMaterial.new()
 				made.shader = EYE
 				made.set_shader_parameter(&"lid_colour", colours.get("skin", Color(0.42, 0.52, 0.25)))
+			if named == "mouth":
+				# (the inside of the mouth, drawn from inside)
+				made = ShaderMaterial.new()
+				made.shader = MOUTH
+			if named == "tongue":
+				# (its own shader: wet, glossy, rippling)
+				made = ShaderMaterial.new()
+				made.shader = TONGUE
+				made.set_shader_parameter(&"albedo", colour)
 			if named == "skin":
 				made.set_shader_parameter(&"mouth", 1.0)
 				# (the throat and belly, painted on the model as a vertex colour)

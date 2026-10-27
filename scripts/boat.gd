@@ -6,7 +6,8 @@ extends Node3D
 ## roof and a pilot house up front; great side wheels in housings painted with a sunburst; and
 ## set into the back of the cabin, the bandstand (red and gold, a scalloped valance, a string of
 ## bulbs that brighten with the music) looking out over the open stern deck, where the crowd
-## dances, on yellow boards with orange dots (shaders/deck.gdshader). Bunting runs from the
+## dances, on wooden planks (shaders/deck.gdshader). Over the bandstand the cabin's roof is a
+## railed mezzanine, under a second storey. Bunting runs from the
 ## stacks back to poles at the stern and forward to the bow.
 ##
 ## It faces +Z and goes down the river (`speed`), with everyone on it as its children: the
@@ -15,17 +16,22 @@ extends Node3D
 const DECK_Y := 1.3
 const STAGE_Y := DECK_Y + 0.45
 const HALF_WIDTH := 4.8
-const STERN := -16.0
+const STERN := -11.5
 const BOW := 19.0
 ## The main cabin, from its back wall forward, and its half width.
 const CABIN_BACK := -2.5
 const CABIN_FRONT := 12.0
-const CABIN_HALF := 3.7
+# (narrower than the hull by a wide walkway each side)
+const CABIN_HALF := 3.0
 const CABIN_HIGH := DECK_Y + 3.4
+## The top of the cabin's roof (the mezzanine, and the walks beside the second storey), and the top
+## of the second storey's roof (the pilot house's floor).
+const ROOF_Y := CABIN_HIGH + 0.2
+const UPPER_Y := CABIN_HIGH + 2.79
 ## The bandstand: an alcove in the back of the cabin, its floor a step up.
 const STAGE_FRONT := CABIN_BACK
 const STAGE_BACK := CABIN_BACK + 3.6
-const STAGE_HALF := 3.2
+const STAGE_HALF := 2.6
 const STAGE_TOP := STAGE_Y + 2.9
 ## The dance floor: the open deck behind the cabin.
 const FLOOR_BACK := STERN + 1.2
@@ -34,6 +40,11 @@ const FLOOR_FRONT := CABIN_BACK - 0.4
 const WHEEL_Z := 5.0
 const WHEEL_RADIUS := 3.5
 const WHEEL_Y := 1.4
+
+const PAINT := preload("res://shaders/boat_paint.gdshader")
+## How far apart the boards are: the cabin's clapboard, and the hull's planks.
+const CLAPBOARD := 0.22
+const PLANKS := 0.3
 
 const RED := Color(0.70, 0.13, 0.11)
 const DEEP_RED := Color(0.48, 0.08, 0.08)
@@ -56,6 +67,7 @@ var _deck_material: ShaderMaterial
 var _windows: StandardMaterial3D
 var _smoke: Array[TrainSmoke] = []
 var _materials := {}
+var _sprays: Array[WheelSpray] = []
 var _time := 0.0
 
 
@@ -76,6 +88,8 @@ func _process(delta: float) -> void:
 	# (riding the swell: a slow lift and a little roll)
 	position.y = sin(_time * 0.7) * 0.03
 	rotation = Vector3(sin(_time * 0.53) * 0.006, 0.0, sin(_time * 0.41 + 1.0) * 0.008)
+	for spray in _sprays:
+		spray.speed = speed
 	for wheel in wheels:
 		# (the top of each wheel goes forward, the bottom back: the paddles push the water astern)
 		wheel.rotate_object_local(Vector3.RIGHT, delta * speed / (WHEEL_RADIUS * 0.8))
@@ -95,17 +109,25 @@ func _process(delta: float) -> void:
 
 # --- Materials and shapes ---
 
-func _surface(colour: Color) -> Material:
-	var key := colour.to_html()
+## The boat's paint in this colour (shaders/boat_paint.gdshader: the toon light over paint that is
+## not quite flat), with lines between boards `boards` apart on its upright faces if they are boards.
+func _surface(colour: Color, boards := 0.0) -> Material:
+	var key := colour.to_html() + str(boards)
 	if not _materials.has(key):
-		_materials[key] = FrogToon.material(colour)
+		var made := ShaderMaterial.new()
+		made.shader = PAINT
+		made.set_shader_parameter(&"albedo", colour)
+		made.set_shader_parameter(&"boards", boards)
+		# (the cream is its own undercoat: worn, it shows the wood)
+		made.set_shader_parameter(&"undercoat", Color(0.62, 0.46, 0.30) if colour == CREAM or colour == GOLD else Color(0.86, 0.78, 0.60))
+		_materials[key] = made
 	return _materials[key]
 
 
-func _box(at: Vector3, size: Vector3, colour: Color, parent: Node3D = null, basis := Basis.IDENTITY) -> MeshInstance3D:
+func _box(at: Vector3, size: Vector3, colour: Color, parent: Node3D = null, basis := Basis.IDENTITY, boards := 0.0) -> MeshInstance3D:
 	var mesh := BoxMesh.new()
 	mesh.size = size
-	return _put(mesh, Transform3D(basis, at), _surface(colour), parent)
+	return _put(mesh, Transform3D(basis, at), _surface(colour, boards), parent)
 
 
 func _cylinder(at: Vector3, radius: float, height: float, colour: Color, parent: Node3D = null, basis := Basis.IDENTITY, top := -1.0, sides := 16) -> MeshInstance3D:
@@ -190,7 +212,26 @@ func _hull() -> void:
 			st.set_normal(-normal)
 			for p in [a0, b1, b0, a0, a1, b1]:
 				st.add_vertex(p)
-		_put(st.commit(), Transform3D.IDENTITY, _surface(band[2]), null)
+		_put(st.commit(), Transform3D.IDENTITY, _surface(band[2], 0.0 if band[2] == GOLD else PLANKS), null)
+	# Its flat bottom, under the water (seen from low down)
+	var flat := PackedVector2Array()
+	for p in outline(48):
+		if flat.is_empty() or (p.distance_to(flat[-1]) > 0.01 and p.distance_to(flat[0]) > 0.01):
+			flat.append(Vector2(p.x * 0.9, p.y))
+	var indices := Geometry2D.triangulate_polygon(flat)
+	var bottom := SurfaceTool.new()
+	bottom.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for k in range(0, indices.size(), 3):
+		var corners: Array[Vector3] = []
+		for j in 3:
+			corners.append(Vector3(flat[indices[k + j]].x, -1.2, flat[indices[k + j]].y))
+		# (both faces)
+		for order: Array in [[0, 1, 2], [0, 2, 1]]:
+			var normal := (corners[order[1]] - corners[order[0]]).cross(corners[order[2]] - corners[order[0]]).normalized()
+			bottom.set_normal(-normal)
+			for o: int in order:
+				bottom.add_vertex(corners[o])
+	_put(bottom.commit(), Transform3D.IDENTITY, _surface(DEEP_RED), null)
 	# The flat stern board, red, with a cream name band
 	_box(Vector3(0.0, 0.05, STERN + 0.02), Vector3(HALF_WIDTH * 2.0 - 1.2, 2.5, 0.08), RED)
 	_box(Vector3(0.0, 0.67, STERN - 0.03), Vector3(HALF_WIDTH * 2.0 - 1.4, 0.2, 0.04), CREAM)
@@ -226,7 +267,9 @@ func _deck() -> void:
 	body.collision_layer = 1
 	add_child(body)
 	for block: Array in [[Vector3(0.0, DECK_Y - 0.25, (STERN + BOW) * 0.5), Vector3(HALF_WIDTH * 2.0, 0.5, BOW - STERN)],
-			[Vector3(0.0, STAGE_Y - 0.25, (STAGE_BACK + STAGE_FRONT) * 0.5), Vector3(STAGE_HALF * 2.0, 0.5, STAGE_BACK - STAGE_FRONT)]]:
+			[Vector3(0.0, STAGE_Y - 0.25, (STAGE_BACK + STAGE_FRONT) * 0.5), Vector3(STAGE_HALF * 2.0, 0.5, STAGE_BACK - STAGE_FRONT)],
+			[Vector3(0.0, ROOF_Y - 0.25, (CABIN_BACK + CABIN_FRONT) * 0.5), Vector3(CABIN_HALF * 2.0 + 1.0, 0.5, CABIN_FRONT - CABIN_BACK + 1.4)],
+			[Vector3(0.0, UPPER_Y - 0.25, (CABIN_BACK + CABIN_FRONT) * 0.5 + 0.4), Vector3((CABIN_HALF - 0.55) * 2.0 + 0.8, 0.5, CABIN_FRONT - CABIN_BACK - 1.6)]]:
 		var shape := CollisionShape3D.new()
 		var box := BoxShape3D.new()
 		box.size = block[1]
@@ -236,33 +279,34 @@ func _deck() -> void:
 
 
 func _railing() -> void:
-	# Round the stern deck and round the bow: posts, a top rail and red panels between
+	# All the way round the deck: posts, a top rail and red panels between (the outline goes up
+	# one side and back down the other; closed at the stern)
 	var edge := outline(48)
-	var runs: Array = [[], []]
+	var run: Array = []
 	for p in edge:
-		var at := Vector3(p.x * 0.985, DECK_Y, p.y)
-		if p.y < CABIN_BACK - 0.2:
-			runs[0].append(at)
-		elif p.y > CABIN_FRONT + 0.4:
-			runs[1].append(at)
-	for run: Array in runs:
-		# (the stern run goes round from one side to the other: sorted round the middle of the boat)
-		run.sort_custom(func(a: Vector3, b: Vector3) -> bool: return atan2(a.x, a.z - 2.0) < atan2(b.x, b.z - 2.0))
-		var height := 0.85
-		var last := Vector3.INF
-		for p: Vector3 in run:
-			if last != Vector3.INF and last.distance_to(p) < 0.05:
-				continue
-			if last != Vector3.INF and last.distance_to(p) < 3.0:
-				var mid := (last + p) * 0.5
-				var along := p - last
-				var basis := Basis.looking_at(along.normalized(), Vector3.UP)
-				var length := along.length()
-				_box(mid + Vector3.UP * height, Vector3(0.1, 0.08, length + 0.08), CREAM, null, basis)
-				_box(mid + Vector3.UP * (height * 0.5), Vector3(0.06, height * 0.78, length - 0.12), CREAM, null, basis)
-				_box(mid + Vector3.UP * (height * 0.5), Vector3(0.08, height * 0.6, length - 0.3), RED, null, basis)
-			_box(p + Vector3.UP * (height * 0.5 + 0.03), Vector3(0.12, height + 0.06, 0.12), CREAM)
-			last = p
+		run.append(Vector3(p.x * 0.985, DECK_Y, p.y))
+	# (and across the stern, in panels about as long as the others)
+	var across := Vector3(run[0].x, DECK_Y, run[0].z) - Vector3(run[-1].x, DECK_Y, run[-1].z)
+	var pieces := ceili(across.length() / 0.7)
+	var from: Vector3 = run[-1]
+	for k in range(1, pieces + 1):
+		run.append(from + across * float(k) / pieces)
+	var height := 0.85
+	var last := Vector3.INF
+	for p: Vector3 in run:
+		if last != Vector3.INF and last.distance_to(p) < 0.05:
+			continue
+		if last != Vector3.INF and last.distance_to(p) < 3.0:
+			var mid := (last + p) * 0.5
+			var along := p - last
+			var basis := Basis.looking_at(along.normalized(), Vector3.UP)
+			var length := along.length()
+			_box(mid + Vector3.UP * height, Vector3(0.1, 0.08, length + 0.08), CREAM, null, basis)
+			# (the red panel stands well proud of the cream one round it, so the two never fight)
+			_box(mid + Vector3.UP * (height * 0.5), Vector3(0.04, height * 0.78, length - 0.12), CREAM, null, basis)
+			_box(mid + Vector3.UP * (height * 0.5), Vector3(0.09, height * 0.6, length - 0.3), RED, null, basis)
+		_box(p + Vector3.UP * (height * 0.5 + 0.03), Vector3(0.12, height + 0.06, 0.12), CREAM)
+		last = p
 	# Lamp posts at the stern corners, with lanterns, carrying the bunting
 	for side: float in [1.0, -1.0]:
 		var post := Vector3(side * (HALF_WIDTH - 0.5), DECK_Y, STERN + 0.8)
@@ -290,15 +334,15 @@ func _cabin() -> void:
 	var stage_middle := (STAGE_FRONT + STAGE_BACK) * 0.5
 	# Its walls, leaving the alcove at the back open: the sides, the front, and the back on either side of it
 	for side: float in [1.0, -1.0]:
-		_box(Vector3(side * CABIN_HALF, (DECK_Y + CABIN_HIGH) * 0.5, mid), Vector3(0.2, CABIN_HIGH - DECK_Y, length), GREEN)
+		_box(Vector3(side * CABIN_HALF, (DECK_Y + CABIN_HIGH) * 0.5, mid), Vector3(0.2, CABIN_HIGH - DECK_Y, length), GREEN, null, Basis.IDENTITY, CLAPBOARD)
 		var cheek := (CABIN_HALF - STAGE_HALF - 0.1)
-		_box(Vector3(side * (STAGE_HALF + 0.1 + cheek * 0.5), (DECK_Y + CABIN_HIGH) * 0.5, CABIN_BACK), Vector3(cheek, CABIN_HIGH - DECK_Y, 0.2), GREEN)
+		_box(Vector3(side * (STAGE_HALF + 0.1 + cheek * 0.5), (DECK_Y + CABIN_HIGH) * 0.5, CABIN_BACK), Vector3(cheek, CABIN_HIGH - DECK_Y, 0.2), GREEN, null, Basis.IDENTITY, CLAPBOARD)
 		# its windows down each side, lit warm from within
 		for k in 6:
 			var z := STAGE_BACK + 0.8 + k * 1.45
-			var pane := _box(Vector3(side * (CABIN_HALF + 0.11), DECK_Y + 1.7, z), Vector3(0.04, 1.0, 0.75), CREAM)
+			var pane := _box(Vector3(side * (CABIN_HALF + 0.145), DECK_Y + 1.7, z), Vector3(0.03, 1.0, 0.75), CREAM)
 			pane.material_override = _glow_material()
-			_box(Vector3(side * (CABIN_HALF + 0.1), DECK_Y + 1.7, z), Vector3(0.05, 1.16, 0.91), CREAM)
+			_box(Vector3(side * (CABIN_HALF + 0.11), DECK_Y + 1.7, z), Vector3(0.04, 1.16, 0.91), CREAM)
 		# and a life ring on the back wall beside the bandstand
 		var ring := TorusMesh.new()
 		ring.inner_radius = 0.2
@@ -307,32 +351,68 @@ func _cabin() -> void:
 		for k in 4:
 			var turn := Basis(Vector3.BACK, k * PI / 2 + PI / 4)
 			_box(Vector3(side * (STAGE_HALF + 0.25), DECK_Y + 1.6, CABIN_BACK - 0.15) + turn * Vector3(0.27, 0.0, 0.0), Vector3(0.12, 0.13, 0.13), RED, null, turn)
-	_box(Vector3(0.0, (DECK_Y + CABIN_HIGH) * 0.5, CABIN_FRONT), Vector3(CABIN_HALF * 2.0, CABIN_HIGH - DECK_Y, 0.2), GREEN)
-	# Its skirting, its gold cornice
-	_box(Vector3(0.0, DECK_Y + 0.15, mid), Vector3(CABIN_HALF * 2.0 + 0.04, 0.3, length + 0.04), RED)
-	_box(Vector3(0.0, CABIN_HIGH - 0.1, mid), Vector3(CABIN_HALF * 2.0 + 0.1, 0.14, length + 0.1), GOLD)
-	# The roof (the texas deck), with a rail round it
+	_box(Vector3(0.0, (DECK_Y + CABIN_HIGH) * 0.5, CABIN_FRONT), Vector3(CABIN_HALF * 2.0, CABIN_HIGH - DECK_Y, 0.2), GREEN, null, Basis.IDENTITY, CLAPBOARD)
+	# Its skirting, its gold cornice (standing out from the walls, not in them)
+	_box(Vector3(0.0, DECK_Y + 0.15, mid), Vector3(CABIN_HALF * 2.0 + 0.3, 0.3, length + 0.3), RED)
+	_box(Vector3(0.0, CABIN_HIGH - 0.1, mid), Vector3(CABIN_HALF * 2.0 + 0.34, 0.14, length + 0.34), GOLD)
+	# The roof (the texas deck), with a rail round it, and a gold line round its edge
 	var roof := CABIN_HIGH + 0.1
 	_box(Vector3(0.0, roof, mid), Vector3(CABIN_HALF * 2.0 + 1.0, 0.2, length + 1.4), CREAM)
-	_box(Vector3(0.0, roof + 0.12, mid), Vector3(CABIN_HALF * 2.0 + 1.02, 0.05, length + 1.42), GOLD)
+	_box(Vector3(0.0, roof, mid), Vector3(CABIN_HALF * 2.0 + 1.06, 0.08, length + 1.46), GOLD)
 	for side: float in [1.0, -1.0]:
 		_box(Vector3(side * (CABIN_HALF + 0.45), roof + 0.5, mid), Vector3(0.06, 0.06, length + 1.2), CREAM)
 		for k in 15:
 			_box(Vector3(side * (CABIN_HALF + 0.45), roof + 0.28, CABIN_BACK - 0.5 + k * 1.0), Vector3(0.05, 0.42, 0.05), CREAM)
-	# The pilot house at the front of the roof
-	var house := Vector3(0.0, roof + 1.05, CABIN_FRONT - 1.6)
-	_box(house, Vector3(2.8, 1.8, 2.4), CREAM)
+	# The second storey: a narrower cabin on the roof, its own windows lit, its own roof and rail;
+	# in front of it at the back, the mezzanine: the main roof as a balcony over the bandstand and
+	# the dance floor, railed along its edge, with lamps
+	var upper_back := CABIN_BACK + 1.6
+	var upper_front := CABIN_FRONT - 0.8
+	var upper_high := roof + 2.5
+	var upper_half := CABIN_HALF - 0.55
+	_box(Vector3(0.0, (roof + upper_high) * 0.5, (upper_back + upper_front) * 0.5), Vector3(upper_half * 2.0, upper_high - roof, upper_front - upper_back), GREEN, null, Basis.IDENTITY, CLAPBOARD)
+	_box(Vector3(0.0, upper_high - 0.08, (upper_back + upper_front) * 0.5), Vector3(upper_half * 2.0 + 0.08, 0.12, upper_front - upper_back + 0.08), GOLD)
 	for side: float in [1.0, -1.0]:
-		var pane := _box(house + Vector3(side * 1.41, 0.25, 0.0), Vector3(0.04, 0.7, 1.8), CREAM)
+		for k in 5:
+			var z := upper_back + 1.0 + k * 2.0
+			var pane := _box(Vector3(side * (upper_half + 0.03), roof + 1.3, z), Vector3(0.04, 0.9, 0.8), CREAM)
+			pane.material_override = _glow_material()
+	for x: float in [-1.6, 1.6]:
+		var pane := _box(Vector3(x, roof + 1.3, upper_back - 0.03), Vector3(0.8, 0.9, 0.04), CREAM)
 		pane.material_override = _glow_material()
-	var front_pane := _box(house + Vector3(0.0, 0.25, 1.21), Vector3(2.3, 0.7, 0.04), CREAM)
-	front_pane.material_override = _glow_material()
+	_box(Vector3(0.0, roof + 0.95, upper_back - 0.04), Vector3(0.9, 1.7, 0.06), RED)
+	var upper_roof := upper_high + 0.1
+	_box(Vector3(0.0, upper_roof, (upper_back + upper_front) * 0.5), Vector3(upper_half * 2.0 + 0.8, 0.18, upper_front - upper_back + 0.8), CREAM)
+	for side: float in [1.0, -1.0]:
+		_box(Vector3(side * (upper_half + 0.35), upper_roof + 0.45, (upper_back + upper_front) * 0.5), Vector3(0.06, 0.06, upper_front - upper_back + 0.6), CREAM)
+	# the mezzanine's rail along the back edge of the main roof, over the bandstand
+	_box(Vector3(0.0, roof + 0.95, CABIN_BACK - 0.6), Vector3(CABIN_HALF * 2.0 + 0.9, 0.07, 0.07), CREAM)
+	_box(Vector3(0.0, roof + 0.5, CABIN_BACK - 0.6), Vector3(CABIN_HALF * 2.0 + 0.9, 0.05, 0.05), CREAM)
+	for k in 15:
+		_box(Vector3(-CABIN_HALF - 0.45 + k * (CABIN_HALF * 2.0 + 0.9) / 14.0, roof + 0.5, CABIN_BACK - 0.6), Vector3(0.05, 0.9, 0.05), CREAM)
+	for side: float in [1.0, -1.0]:
+		var lamp := _cylinder(Vector3(side * (CABIN_HALF + 0.3), roof + 1.25, CABIN_BACK - 0.6), 0.1, 0.25, WINDOW)
+		lamp.material_override = _glow_material()
+	roof = upper_roof
+	# The pilot house on top of it all, at the front
+	# (open all round above the sills, so the captain is seen at the wheel inside: sills, corner
+	# posts, a header, and its red roof)
+	var house := Vector3(0.0, roof + 1.05, CABIN_FRONT - 1.6)
+	var sill := house.y - 0.9 + 0.27
+	for side: float in [1.0, -1.0]:
+		_box(Vector3(side * 1.37, sill, house.z), Vector3(0.08, 0.54, 2.4), CREAM)
+		_box(Vector3(0.0, sill, house.z + side * 1.17), Vector3(2.8, 0.54, 0.08), CREAM)
+		_box(Vector3(side * 1.37, sill + 0.29, house.z), Vector3(0.16, 0.05, 2.5), GOLD)
+		_box(Vector3(0.0, sill + 0.3, house.z + side * 1.17), Vector3(2.9, 0.05, 0.16), GOLD)
+		for end: float in [1.0, -1.0]:
+			_box(Vector3(side * 1.35, house.y + 0.25, house.z + end * 1.15), Vector3(0.12, 1.3, 0.12), CREAM)
+	_box(house + Vector3(0.0, 0.8, 0.0), Vector3(2.8, 0.2, 2.4), CREAM)
 	_box(house + Vector3(0.0, 1.0, 0.0), Vector3(3.2, 0.16, 2.8), RED)
 	_cylinder(house + Vector3(0.0, 1.25, 0.0), 0.2, 0.35, GOLD)
 	# The stacks: tall and black, banded in gold, crowned, side by side ahead of the middle
 	for side: float in [1.0, -1.0]:
 		var foot := Vector3(side * 1.6, roof, CABIN_FRONT - 4.6)
-		var height := 9.5
+		var height := 7.5
 		_cylinder(foot + Vector3.UP * (height * 0.5), 0.45, height, BLACK)
 		for y in [1.6, 6.6]:
 			_cylinder(foot + Vector3.UP * y, 0.49, 0.22, GOLD)
@@ -349,9 +429,9 @@ func _cabin() -> void:
 		mouth.add_child(smoke)
 		_smoke.append(smoke)
 		for z in [-2.8, 2.8]:
-			_wire(crown + Vector3(0.0, -1.0, 0.0), Vector3(side * 3.2, roof + 0.2, foot.z + z), 0.015, BLACK)
+			_wire(crown + Vector3(0.0, -1.0, 0.0), Vector3(side * 2.7, roof + 0.2, foot.z + z), 0.015, BLACK)
 	# A flagstaff at the bow
-	var staff := Vector3(0.0, DECK_Y, BOW - 1.8)
+	var staff := Vector3(0.0, DECK_Y, BOW - 0.35)
 	_cylinder(staff + Vector3.UP * 2.5, 0.05, 5.0, CREAM)
 	_cylinder(staff + Vector3.UP * 5.05, 0.09, 0.1, GOLD)
 
@@ -362,21 +442,24 @@ func _bandstand() -> void:
 	var middle := (STAGE_FRONT + STAGE_BACK) * 0.5
 	var depth := STAGE_BACK - STAGE_FRONT
 	# Its floor, a step up, red in front with a gold edge, with a round red rug
+	# (its boards a little above the red step, and a little in from its sides; the rug well above
+	# the boards: nothing lies in the same plane as anything else)
 	_box(Vector3(0.0, (DECK_Y + STAGE_Y) * 0.5, middle), Vector3(STAGE_HALF * 2.0, STAGE_Y - DECK_Y, depth), RED)
-	var stage_floor := _box(Vector3(0.0, STAGE_Y - 0.01, middle), Vector3(STAGE_HALF * 2.0, 0.02, depth), CREAM)
+	var stage_floor := _box(Vector3(0.0, STAGE_Y + 0.01, middle + 0.01), Vector3(STAGE_HALF * 2.0 - 0.04, 0.02, depth - 0.06), CREAM)
 	stage_floor.material_override = _deck_material
-	_box(Vector3(0.0, STAGE_Y - 0.03, STAGE_FRONT - 0.02), Vector3(STAGE_HALF * 2.0 + 0.04, 0.07, 0.08), GOLD)
-	_cylinder(Vector3(0.0, STAGE_Y + 0.005, middle - 0.3), 1.8, 0.012, DEEP_RED, null, Basis.IDENTITY, -1.0, 40)
+	_box(Vector3(0.0, STAGE_Y - 0.01, STAGE_FRONT - 0.02), Vector3(STAGE_HALF * 2.0 + 0.04, 0.09, 0.1), GOLD)
+	_cylinder(Vector3(0.0, STAGE_Y + 0.035, middle - 0.3), 1.8, 0.02, DEEP_RED, null, Basis.IDENTITY, -1.0, 40)
 	# The alcove: back wall and sides red, panelled cream and gold, and a ceiling
 	_box(Vector3(0.0, (STAGE_Y + STAGE_TOP) * 0.5, STAGE_BACK + 0.1), Vector3(STAGE_HALF * 2.0, STAGE_TOP - STAGE_Y, 0.2), RED)
 	for k in 3:
 		var x := -2.1 + k * 2.1
-		_box(Vector3(x, STAGE_Y + 1.4, STAGE_BACK - 0.01), Vector3(1.5, 2.0, 0.04), GOLD)
-		_box(Vector3(x, STAGE_Y + 1.4, STAGE_BACK - 0.03), Vector3(1.3, 1.8, 0.04), CREAM)
-		_box(Vector3(x, STAGE_Y + 1.4, STAGE_BACK - 0.05), Vector3(1.0, 1.5, 0.04), DEEP_RED)
+		# (each panel stands out a good step from the one behind it)
+		_box(Vector3(x, STAGE_Y + 1.4, STAGE_BACK - 0.02), Vector3(1.5, 2.0, 0.04), GOLD)
+		_box(Vector3(x, STAGE_Y + 1.4, STAGE_BACK - 0.06), Vector3(1.3, 1.8, 0.04), CREAM)
+		_box(Vector3(x, STAGE_Y + 1.4, STAGE_BACK - 0.1), Vector3(1.0, 1.5, 0.04), DEEP_RED)
 	for side: float in [1.0, -1.0]:
 		_box(Vector3(side * (STAGE_HALF + 0.1), (STAGE_Y + STAGE_TOP) * 0.5, middle), Vector3(0.2, STAGE_TOP - STAGE_Y, depth), RED)
-		_box(Vector3(side * (STAGE_HALF - 0.01), STAGE_Y + 1.4, middle + 0.2), Vector3(0.04, 1.8, depth - 1.2), CREAM)
+		_box(Vector3(side * (STAGE_HALF - 0.03), STAGE_Y + 1.4, middle + 0.2), Vector3(0.04, 1.8, depth - 1.2), CREAM)
 	_box(Vector3(0.0, STAGE_TOP + 0.1, middle), Vector3(STAGE_HALF * 2.4, 0.2, depth), DEEP_RED)
 	# The front of it on the cabin's back wall: red pillars banded in gold, a header with gold
 	# mouldings and a scalloped valance, a crest above, the wall above it up to the cornice
@@ -385,13 +468,16 @@ func _bandstand() -> void:
 		_cylinder(pillar + Vector3.UP * ((DECK_Y + STAGE_TOP) * 0.5), 0.2, STAGE_TOP - DECK_Y, RED)
 		for y in [STAGE_Y + 0.05, STAGE_TOP - 0.55, STAGE_TOP - 0.25]:
 			_cylinder(pillar + Vector3.UP * y, 0.24, 0.09, GOLD)
-	_box(Vector3(0.0, (STAGE_TOP + CABIN_HIGH) * 0.5, CABIN_BACK), Vector3(STAGE_HALF * 2.2, CABIN_HIGH - STAGE_TOP, 0.2), GREEN)
+	# (the wall over the opening meets the cheeks either side of it, not overlapping them, and
+	# stops short of the alcove's ceiling under it)
+	_box(Vector3(0.0, (STAGE_TOP + 0.05 + CABIN_HIGH) * 0.5, CABIN_BACK), Vector3(STAGE_HALF * 2.0 + 0.2, CABIN_HIGH - STAGE_TOP - 0.05, 0.2), GREEN, null, Basis.IDENTITY, CLAPBOARD)
 	_box(Vector3(0.0, STAGE_TOP - 0.25, STAGE_FRONT - 0.12), Vector3(STAGE_HALF * 2.0 + 0.6, 0.55, 0.3), RED)
 	for y in [STAGE_TOP + 0.02, STAGE_TOP - 0.52]:
 		_box(Vector3(0.0, y, STAGE_FRONT - 0.28), Vector3(STAGE_HALF * 2.0 + 0.6, 0.07, 0.06), GOLD)
 	for k in 11:
 		var x := -STAGE_HALF + 0.3 + k * (STAGE_HALF * 2.0 - 0.6) / 10.0
-		_cylinder(Vector3(x, STAGE_TOP - 0.58, STAGE_FRONT - 0.2), 0.3, 0.05, CREAM if k % 2 == 0 else RED, null, Basis(Vector3.RIGHT, PI / 2), -1.0, 18)
+		# (each scallop overlaps the next: they are a step apart, front and back in turn)
+		_cylinder(Vector3(x, STAGE_TOP - 0.58, STAGE_FRONT - 0.2 - 0.04 * float(k % 2)), 0.3, 0.03, CREAM if k % 2 == 0 else RED, null, Basis(Vector3.RIGHT, PI / 2), -1.0, 18)
 	var crest := TorusMesh.new()
 	crest.inner_radius = 0.9
 	crest.outer_radius = 1.06
@@ -399,7 +485,7 @@ func _bandstand() -> void:
 	crest.ring_segments = 8
 	_put(crest, Transform3D(Basis(Vector3.RIGHT, PI / 2).scaled(Vector3(1.0, 1.0, 0.6)), Vector3(0.0, CABIN_HIGH - 0.2, CABIN_BACK - 0.12)), Toon.gold(GOLD), null)
 	_box(Vector3(0.0, CABIN_HIGH + 0.45, CABIN_BACK - 0.05), Vector3(1.8, 0.9, 0.12), RED)
-	_box(Vector3(0.0, CABIN_HIGH + 0.38, CABIN_BACK - 0.12), Vector3(1.2, 0.5, 0.04), CREAM)
+	_box(Vector3(0.0, CABIN_HIGH + 0.38, CABIN_BACK - 0.14), Vector3(1.2, 0.5, 0.04), CREAM)
 	# A string of bulbs round its opening, which brighten with the music
 	_bulbs = ShaderMaterial.new()
 	_bulbs.shader = preload("res://shaders/bulb.gdshader")
@@ -492,6 +578,14 @@ func _wheel(side: float) -> void:
 	rim.ring_segments = 6
 	_put(rim, Transform3D(Basis(Vector3.FORWARD, PI / 2), Vector3(face_x, 0.0, 0.0)), Toon.gold(GOLD), housing)
 	_box(Vector3(-side * 0.3, 0.02, 0.0), Vector3(1.0, 0.14, outer * 2.0 + 0.2), DARK_GREEN, housing)
+	# The water it throws about, down at the water line under it (Salmon Run 2's splashes)
+	var spray := WheelSpray.new()
+	spray.radius = radius
+	spray.reach = sqrt(radius * radius - WHEEL_Y * WHEEL_Y) - 0.1
+	spray.speed = speed
+	spray.position = centre + Vector3(0.0, -WHEEL_Y, 0.0)
+	add_child(spray)
+	_sprays.append(spray)
 
 
 # --- Bunting ---
@@ -505,7 +599,7 @@ func _bunting() -> void:
 		var stack := Vector3(side * 1.6, roof + 9.2, CABIN_FRONT - 4.6)
 		var post := Vector3(side * (HALF_WIDTH - 0.5), DECK_Y + 4.6, STERN + 0.8)
 		lines.append([stack, post, 2.0])
-		lines.append([stack, Vector3(0.0, DECK_Y + 5.0, BOW - 1.8), 1.0])
+		lines.append([stack, Vector3(0.0, DECK_Y + 5.0, BOW - 0.35), 1.0])
 		lines.append([Vector3(side * (CABIN_HALF + 0.4), roof + 0.6, CABIN_BACK - 0.5), post, 0.9])
 	lines.append([Vector3(HALF_WIDTH - 0.5, DECK_Y + 4.6, STERN + 0.8), Vector3(-(HALF_WIDTH - 0.5), DECK_Y + 4.6, STERN + 0.8), 0.8])
 	var st := SurfaceTool.new()

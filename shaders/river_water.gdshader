@@ -136,6 +136,14 @@ uniform float wake_echo : hint_range(0.0, 1.0) = 0.0;
 // How much paler and flatter the water is between the arms.
 uniform float wake_calm : hint_range(0.0, 1.0) = 0.3;
 
+// The wash astern of a boat (0 in w is none): white water churned up behind its stern, and a
+// lane of it back from each paddle wheel. (Where the boat is across, in metres; its stern,
+// metres along; its wheels, metres along; their half spread across.) It lies on the water, so
+// the boat leaves it behind; it thins out and is gone `wash_length` metres back.
+uniform vec4 wash = vec4(0.0);
+uniform float wash_half = 3.5;
+uniform float wash_length = 70.0;
+
 uniform sampler2D depth_texture : hint_depth_texture, filter_nearest, repeat_disable;
 
 varying vec3 v_world;
@@ -357,8 +365,30 @@ void fragment() {
 			wake_froth = max(wake_froth, (1.0 - smoothstep(0.0, 0.2 + inner * 0.55, d)) * fade);
 		}
 	}
+	// The wash astern
+	float wash_white = 0.0;
+	if (wash.w > 0.0 && v_metres.y < wash.z + 1.0 && v_metres.y > wash.y - wash_length) {
+		float x = v_metres.x - wash.x;
+		// (fine froth, drawn out in streaks along the way the boat went)
+		vec2 wuv = v_metres * vec2(0.9, 0.35);
+		float churn = texture(foam_texture, wuv).r * 0.55 + texture(foam_texture, wuv.yx * 1.7 + vec2(0.4, 0.1)).r * 0.45;
+		// behind the stern: a broad band, widening and thinning out
+		float back = wash.y - v_metres.y;
+		float k = clamp(back / wash_length, 0.0, 1.0);
+		float half_width = wash_half * (0.8 + 0.7 * k);
+		float stern = (1.0 - smoothstep(half_width * 0.45, half_width, abs(x))) * smoothstep(-1.0, 1.5, back) * pow(1.0 - k, 1.6);
+		// back from each wheel: a lane of froth drawing in towards the middle
+		float from_wheel = wash.z - v_metres.y;
+		float kw = clamp(from_wheel / wash_length, 0.0, 1.0);
+		float lane_x = wash.w * (1.0 - 0.35 * kw);
+		float lane_width = 0.8 + 2.2 * kw;
+		float lane = (1.0 - smoothstep(lane_width * 0.4, lane_width, abs(abs(x) - lane_x))) * smoothstep(-1.0, 1.0, from_wheel) * pow(1.0 - kw, 1.3);
+		float amount = max(stern, lane);
+		wake_flat = max(wake_flat, amount);
+		wash_white = step(1.05 - amount * 0.9, churn);
+	}
 	// (its foam has a ragged edge, like the rest; the froth down the middle is all ragged)
-	float wake_white = step(0.4, wake_foam * mix(1.0, 2.0 * n, wake_ragged));
+	float wake_white = max(step(0.4, wake_foam * mix(1.0, 2.0 * n, wake_ragged)), wash_white);
 	wake_white = max(wake_white, step(1.0 - wake_churn * 0.75, wake_froth * (0.25 + n)) * step(0.001, wake_churn));
 	white = max(white, wake_white);
 	col = mix(col, shallow.rgb, wake_flat * wake_calm * (1.0 - white));

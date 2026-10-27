@@ -23,9 +23,7 @@ func _run() -> void:
 	root.add_child(main)
 	for frame in 10:
 		await process_frame
-	main.hud.boarded.emit()
-	main.hud._boarded = true
-	main.hud._card.hide()
+	main.desk.hide_all()
 	var size := root.get_visible_rect().size
 	var tag := "tall" if size.y > size.x else "wide"
 	for frame in 120:

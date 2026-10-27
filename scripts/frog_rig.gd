@@ -30,7 +30,7 @@ const EMOTES := ["bow", "coy", "laugh", "shock", "panic", "cheer", "point"]
 ## top of its droop), the tongue out (0..1), and the head tipped (back +, to its left +).
 const EXPRESSIONS := {
 	"neutral": {},
-	"smile": {"wide": 0.8, "jaw": 0.04},
+	"smile": {"wide": 0.9},
 	"grin": {"wide": 1.0, "jaw": 0.4},
 	"bliss": {"wide": 0.9, "jaw": 0.12, "lid_l": 1.0, "lid_r": 1.0, "tilt": 0.18, "back": 0.12},
 	"shock": {"jaw": 0.8, "round": 0.5, "lid_l": -0.6, "lid_r": -0.6, "back": 0.14},
@@ -76,6 +76,13 @@ var _gaze_eyes := Vector2.ZERO    # yaw, pitch the eyes are on (radians, from st
 var _gaze_head := Vector2.ZERO    # and the head
 
 var _jaw: Node3D
+## The soft parts, jiggled on springs as the body moves (`_jiggle`): [bone, its rest, how far it
+## is off it, how fast it is going, how loose].
+var _jiggles: Array = []
+var _last_hips := Vector3.INF
+var _hips_going := Vector3.ZERO
+var _head_lag := Vector3.ZERO
+var _head_lag_going := Vector3.ZERO
 var _lids: Array[Node3D] = []
 var _tongue: Array[Node3D] = []
 var _shapes: Array = []          # [MeshInstance3D, wide, round, frown blend shape indexes]
@@ -87,6 +94,9 @@ var _face := {}                  # what the face is now, eased towards what it s
 ## first (seconds; a lazy blinker's eyes go one after the other), and how long between blinks
 ## (seconds, from, to: picked afresh each time).
 var blink_time := 0.16
+## Inside the open mouth: the tongue lying in it (short, broad and pink, going with the jaw), or
+## only the dark of the mouth. For every frog (the viewer's and the camera desk's switch).
+static var tongue_in_mouth := true
 var blink_gap := 0.0
 var blink_every := Vector2(1.5, 5.5)
 var _blinks: Array[float] = [10.0, 10.0]   # seconds since each eye began its last blink
@@ -100,6 +110,7 @@ var _throat := 0.0
 var _feature := 0.0
 var _groove := 0.0               # the music's loudness, eased slowly: how big the moves are
 var _dancing := 0.0              # eased in when the music starts
+var _still := 1.0                # eased out while it walks: a dance gives way to the rig's walk
 var _emote := ""
 var _emote_time := 0.0
 var _emote_length := 0.0
@@ -118,12 +129,16 @@ func _ready() -> void:
 	if _has(&"jaw"):
 		_jaw = _joint(_head, &"jaw", _rest(&"jaw"))
 		var parent := _jaw
-		for k in 4:
+		for k in 8:
 			var bone := StringName("tongue%d" % k)
 			if not _has(bone):
 				break
 			parent = _joint(parent, bone, _rest(bone))
 			_tongue.append(parent)
+	for soft: Array in [[&"belly", _spine, 0.45], [&"throat", _neck, 0.7]]:
+		if _has(soft[0]) and soft[1] != null:
+			var node := _joint(soft[1], soft[0], _rest(soft[0]))
+			_jiggles.append([node, node.position, Vector3.ZERO, Vector3.ZERO, soft[2]])
 	for bone: StringName in [&"lid_l", &"lid_r"]:
 		if _has(bone):
 			_lids.append(_joint(_head, bone, _rest(bone)))
@@ -206,6 +221,8 @@ func _pose_extra(delta: float) -> void:
 	var playing := Groove.playing
 	_groove = _approach(_groove, (Groove.energy if playing else 0.0) * keen, 1.6, delta)
 	_dancing = _approach(_dancing, 1.0 if playing else 0.0, 1.5, delta)
+	var going: Vector3 = _player.velocity if _player else Vector3.ZERO
+	_still = _approach(_still, 0.0 if Vector2(going.x, going.z).length() > 0.12 else 1.0, 4.0, delta)
 	var leading := part != "" and (Groove.lead == part or Groove.second == part)
 	_feature = _approach(_feature, 1.0 if leading else 0.0, 2.0, delta)
 	# The emote's envelope: in, held, out
@@ -234,7 +251,119 @@ func _pose_extra(delta: float) -> void:
 	if _emote_amount > 0.01:
 		_emote_pose()
 	_gaze(delta)
+	_jiggle(delta)
 	_face_pose(delta)
+
+
+# --- Jiggle ---
+
+## Frogs are jiggly: the belly and the throat's pouch on springs, left behind by every bounce and
+## turn of the body and wobbling back, and the head lagging and overshooting on its neck. (Driven
+## by how the hips are pushed about, so the livelier the dance, the more it all wobbles.)
+func _jiggle(delta: float) -> void:
+	if delta <= 0.0 or _hips == null:
+		return
+	var at := _hips.global_position
+	if _last_hips == Vector3.INF:
+		_last_hips = at
+	var going := (at - _last_hips) / delta
+	var push := ((going - _hips_going) / delta).limit_length(60.0)
+	_last_hips = at
+	_hips_going = going
+	# (felt in the figure's own space and size)
+	var felt := global_basis.orthonormalized().inverse() * push / maxf(global_basis.get_scale().y, 0.01)
+	for soft: Array in _jiggles:
+		var offset: Vector3 = soft[2]
+		var speed: Vector3 = soft[3]
+		speed += (-offset * 260.0 - speed * 8.0 - felt * float(soft[4])) * delta
+		offset = (offset + speed * delta).limit_length(0.025)
+		soft[2] = offset
+		soft[3] = speed
+		(soft[0] as Node3D).position = soft[1] + offset
+	_head_lag_going += (-_head_lag * 140.0 - _head_lag_going * 7.0 - felt * 0.5) * delta
+	_head_lag = (_head_lag + _head_lag_going * delta).limit_length(0.35)
+	if _head:
+		_head.rotate_object_local(Vector3.RIGHT, _head_lag.z * 0.9 - _head_lag.y * 0.6)
+		_head.rotate_object_local(Vector3.BACK, -_head_lag.x * 0.9)
+
+
+# --- Arms ---
+
+## How broad each body's trunk is (tools/build_frogs.py BODIES `broad`).
+const BROAD := {"round": 1.12, "slim": 0.92, "squat": 1.32}
+
+
+## CharacterRig's arm, solved for a frog. A frog is stout and the poses were made for the slim
+## boy, so a hand is kept out of the trunk (and its clothes) and the elbows go out from the sides.
+## And each arm bone is turned the shortest way from its rest: the boy's arm takes its roll from
+## the way he faces, which flips over (and twists the hands round) when a forearm points ahead,
+## as the band's mostly do.
+func _solve_arm(i: int, side: float, point: Vector3, fore_length: float, weight: float, pole := Vector3.ZERO) -> void:
+	var forward := global_basis.z.normalized()
+	var left := global_basis.x.normalized()
+	point = _clear_of_body(point)
+	if pole == Vector3.ZERO:
+		pole = Vector3.DOWN + left * side * 0.6 - forward * 0.3
+	pole = (pole.normalized() + left * side * 0.7).normalized()
+	var shoulder := _shoulders[i]
+	var from := shoulder.global_position
+	var to := point - from
+	var size := global_basis.get_scale().y
+	var upper_length := _upper_arm * size
+	fore_length *= size
+	var reach := clampf(to.length(), 0.1 * size, upper_length + fore_length - 0.005 * size)
+	var direction := to.normalized() if to.length_squared() > 0.000001 else Vector3.DOWN
+	var hinge := direction.cross(pole)
+	hinge = hinge.normalized() if hinge.length_squared() > 0.0001 else (left - direction * left.dot(direction)).normalized()
+	var angle := acos(clampf((upper_length * upper_length + reach * reach - fore_length * fore_length) / (2.0 * upper_length * reach), -1.0, 1.0))
+	var upper_direction := direction.rotated(hinge, angle)
+	var elbow_at := from + upper_direction * upper_length
+	var fore_direction := (from + direction * reach - elbow_at).normalized()
+	# (each bone turned the shortest way from how it rests to where it must point: the upper arm
+	# swings at the shoulder without rolling round its length, which would twist the shoulder's
+	# skin, and the forearm folds at the elbow about its hinge, so the hands never flip over)
+	# (a bone of the rig lies along its own -Y: unturned, an arm hangs straight down)
+	var parent := (shoulder.get_parent() as Node3D).global_basis.orthonormalized()
+	var swing := Basis(Quaternion((parent * Vector3.DOWN).normalized(), upper_direction))
+	shoulder.basis = shoulder.basis.orthonormalized().slerp((parent.inverse() * swing * parent).orthonormalized(), weight)
+	var elbow := _elbows[i]
+	var upper := shoulder.global_basis.orthonormalized()
+	var fold := Basis(Quaternion((upper * Vector3.DOWN).normalized(), fore_direction))
+	elbow.basis = elbow.basis.orthonormalized().slerp((upper.inverse() * fold * upper).orthonormalized(), weight)
+
+
+## `point` moved out of the trunk if it is inside it: the trunk as an upright elliptic cylinder
+## round the line from hips to chest, as broad as the body and a little more (for the clothes and
+## the hand itself).
+func _clear_of_body(point: Vector3) -> Vector3:
+	if _hips == null:
+		return point
+	var top: Node3D = _chest if _chest else _spine
+	var axis := top.global_position - _hips.global_position
+	var height := axis.length()
+	if height < 0.001:
+		return point
+	axis /= height
+	var left := global_basis.x.normalized()
+	left = (left - axis * left.dot(axis)).normalized()
+	var front := axis.cross(left)
+	if front.dot(global_basis.z) < 0.0:
+		front = -front
+	var broad: float = BROAD.get(look.get("body", "round"), 1.12)
+	var across := (0.168 * broad + 0.05) * global_basis.x.length()
+	var deep := 0.185 * global_basis.z.length()
+	var centre := _hips.global_position + front * 0.02 * global_basis.z.length()
+	var p := point - centre
+	var along := p.dot(axis)
+	if along < -0.05 * height or along > height * 1.15:
+		return point
+	var rx := p.dot(left)
+	var rz := p.dot(front)
+	var inside := (rx / across) * (rx / across) + (rz / deep) * (rz / deep)
+	if inside >= 1.0 or inside < 0.000001:
+		return point
+	var out := 1.0 / sqrt(inside)
+	return centre + axis * along + left * rx * out + front * rz * out
 
 
 # --- Looking at things ---
@@ -264,13 +393,18 @@ func _gaze(delta: float) -> void:
 	want.x = clampf(want.x, -1.6, 1.6)
 	want.y = clampf(want.y, -0.6, 0.6)
 	_gaze_eyes = _gaze_eyes.lerp(want, 1.0 - exp(-22.0 * delta))
-	_gaze_head = _gaze_head.lerp(Vector2(clampf(want.x, -1.0, 1.0), clampf(want.y, -0.35, 0.35)), 1.0 - exp(-3.5 * delta))
+	# (a frog has hardly any neck: the head turns less, the eyes do more of the looking, and the
+	# turn is shared down through the chest, so no one joint wrings the skin)
+	_gaze_head = _gaze_head.lerp(Vector2(clampf(want.x, -0.75, 0.75), clampf(want.y, -0.3, 0.3)), 1.0 - exp(-3.5 * delta))
 	var turn := _gaze_head * (1.0 - _emote_amount * 0.6)
+	if _chest:
+		_chest.rotate_object_local(Vector3.UP, turn.x * 0.3)
+		_chest.rotate_object_local(Vector3.RIGHT, -turn.y * 0.2)
 	if _neck:
-		_neck.rotate_object_local(Vector3.UP, turn.x * 0.4)
-		_neck.rotate_object_local(Vector3.RIGHT, -turn.y * 0.3)
-	_head.rotate_object_local(Vector3.UP, turn.x * 0.6)
-	_head.rotate_object_local(Vector3.RIGHT, -turn.y * 0.7)
+		_neck.rotate_object_local(Vector3.UP, turn.x * 0.35)
+		_neck.rotate_object_local(Vector3.RIGHT, -turn.y * 0.35)
+	_head.rotate_object_local(Vector3.UP, turn.x * 0.35)
+	_head.rotate_object_local(Vector3.RIGHT, -turn.y * 0.45)
 
 
 # --- The face ---
@@ -325,6 +459,8 @@ func _face_pose(delta: float) -> void:
 		eye.set_shader_parameter(&"pupil", Vector2(clampf(ahead.x * 1.6 - side * 0.12, -1.0, 1.0), clampf(ahead.y * 1.8 - 0.05, -1.0, 1.0)))
 	for skin in _skin_materials:
 		skin.set_shader_parameter(&"open", _face.jaw)
+		# (and the drawn line hooks up at its corners in a smile, down in a frown)
+		skin.set_shader_parameter(&"smile", _face.wide - _face.frown)
 	if _jaw:
 		_jaw.rotation.x = _face.jaw * JAW_WIDE
 		var throat := 0.0
@@ -348,11 +484,18 @@ func _tongue_pose() -> void:
 	if _tongue.is_empty():
 		return
 	var out: float = _face.tongue
-	_tongue[0].scale = Vector3.ONE * lerpf(0.04, 1.0, out)
-	_tongue[0].rotation = Vector3(-0.5 * out + sin(_time * 9.0) * 0.25 * out, sin(_time * 7.0) * 0.4 * out, 0.0)
-	for k in range(1, _tongue.size()):
-		var t := _time * (11.0 + k) + k * 1.4
-		_tongue[k].rotation = Vector3(-0.35 * out + sin(t) * 0.7 * out, cos(t * 0.8) * 0.6 * out, 0.0)
+	# (in the mouth it lies along the floor of it, drawn up short; or it is hidden away)
+	var resting := Vector3(1.25, 0.9, 0.45) if tongue_in_mouth else Vector3.ONE * 0.04
+	_tongue[0].scale = resting.lerp(Vector3.ONE, out)
+	# (out and down from the mouth, then waves running down it to the tip, up and down and side to
+	# side, bigger towards the tip, as a ribbon flaps)
+	_tongue[0].rotation = Vector3(-0.22 * (1.0 - out) - 0.45 * out + sin(_time * 6.0) * 0.12 * out, sin(_time * 3.7) * 0.25 * out, 0.0)
+	var joints := _tongue.size()
+	for k in range(1, joints):
+		var share := float(k) / joints
+		var phase := _time * 10.0 - k * 1.1
+		_tongue[k].rotation = Vector3(-0.12 * out + sin(phase) * (0.18 + 0.32 * share) * out,
+				sin(phase * 0.6 + 1.3) * (0.1 + 0.25 * share) * out, sin(phase * 0.6) * 0.15 * share * out)
 
 
 # --- Footing: where the feet are, and the legs solved to keep them there ---
@@ -475,6 +618,12 @@ func _play(delta: float) -> void:
 		"drums":
 			_drum_hands()
 			return
+		"helm":
+			# Steering: the wheel worked a little one way and back as the river bends
+			var wheel: Node3D = instrument.parts.wheel
+			wheel.rotation.z = sin(_time * 0.35) * 0.35 + sin(_time * 0.11 + 1.0) * 0.25
+			_curl[0] = 1.2
+			_curl[1] = 1.2
 	_solve_arm(0, 1.0, grip_l, _forearm + 0.05, 1.0, pole_l)
 	_solve_arm(1, -1.0, grip_r, _forearm + 0.05, 1.0, pole_r)
 	_pose_fingers(0, 1.0)
@@ -567,12 +716,15 @@ func _sing_body() -> void:
 	_replant(_stance(1.5), 0.15)
 	var size := global_basis.get_scale().y
 	var reach := smoothstep(0.3, 0.8, voice) * _dancing
-	var chest := to_global(Vector3(0.03, _hip_height + 0.25, 0.14))
+	# (the left hand on his heart, on its own side; the right low at his side, opening out wide
+	# as he sings out)
+	var chest := to_global(Vector3(0.07, _hip_height + 0.27, 0.2))
+	var low := to_global(Vector3(-0.24, _hip_height + 0.12, 0.16))
 	var out := to_global(Vector3(-0.42, _hip_height + 0.33 + 0.12 * voice, 0.28))
 	_solve_arm(0, 1.0, chest, _forearm + 0.03, 1.0, Vector3.ZERO)
 	_curl[0] = 0.4
 	_pose_fingers(0, 1.0)
-	_solve_arm(1, -1.0, chest.lerp(out, reach) + Vector3.DOWN * 0.05 * size * (1.0 - reach), _forearm + 0.03, 0.9, Vector3.ZERO)
+	_solve_arm(1, -1.0, low.lerp(out, reach), _forearm + 0.03, 0.9, Vector3.ZERO)
 	_curl[1] = lerpf(0.6, 0.15, reach)
 	_splay[1] = lerpf(0.3, 0.8, reach)
 	_pose_fingers(1, -1.0)
@@ -585,9 +737,10 @@ func _sing_body() -> void:
 ## A dance is a figure of steps going round with the beat: smooth curves of it (sin, cos and
 ## eased steps), so it never jumps. `g` is how big it is (with the music's loudness).
 func _dance() -> void:
+	var on := _dancing * _still
 	var size := global_basis.get_scale().y
 	var b := (Groove.beat if Groove.playing else _time * 0.5) + lag
-	var g := (0.55 + 0.6 * _groove) * _dancing
+	var g := (0.55 + 0.6 * _groove) * on
 	var left := global_basis.x.normalized()
 	var up := global_basis.y.normalized()
 	var forward := global_basis.z.normalized()
@@ -720,8 +873,8 @@ func _dance() -> void:
 			hips = Vector3(half * 0.03, -0.03 * (1.0 - bounce), 0.0) * g
 			turn = Vector3(0.0, 0.0, half * 0.06 * g)
 			nod = Vector3(0.0, 0.0, half * 0.1 * g)
-	_hips.position = _hips.position.lerp(Vector3(0.0, _hip_height, 0.0) + hips, _dancing)
-	_hips.basis = _hips.basis.slerp(Basis.from_euler(turn), _dancing)
+	_hips.position = _hips.position.lerp(Vector3(0.0, _hip_height, 0.0) + hips, on)
+	_hips.basis = _hips.basis.slerp(Basis.from_euler(turn), on)
 	for joint: Node3D in ([_spine, _chest] if _chest else [_spine]):
 		joint.rotate_object_local(Vector3.RIGHT, bend.x * 0.5)
 		joint.rotate_object_local(Vector3.UP, bend.y * 0.5)
@@ -731,23 +884,44 @@ func _dance() -> void:
 	_head.rotate_object_local(Vector3.FORWARD, nod.z)
 	var planted := _footing()
 	for i in 2:
-		feet[i] = planted[i].interpolate_with(feet[i], _dancing)
+		feet[i] = planted[i].interpolate_with(feet[i], on)
 	_replant(feet, 0.25)
 	for i in 2:
 		var side := 1.0 if i == 0 else -1.0
 		if hands[i] != null:
 			var target: Vector3 = hands[i]
-			_solve_arm(i, side, to_global(target), _forearm + 0.03, _dancing, (left * side + Vector3.DOWN * 0.6 - forward * 0.3).normalized())
+			_solve_arm(i, side, to_global(target), _forearm + 0.03, on, (left * side + Vector3.DOWN * 0.6 - forward * 0.3).normalized())
 			_curl[i] = 0.6
 			_pose_fingers(i, side)
-	if dance == "partner" and is_instance_valid(partner):
+	if dance == "partner" and is_instance_valid(partner) and partner._shoulders.size() > 1:
+		# A closed hold, as in a waltz: the lead's left hand and the other's right joined out to
+		# the lead's left at shoulder height; the lead's right hand on the other's shoulder blade,
+		# the other's left on the lead's shoulder. (Which leads: the first made.)
+		var leads := get_instance_id() < partner.get_instance_id()
 		var mine := global_position
 		var theirs := partner.global_position
-		var shoulder: Vector3 = partner._shoulders[1].global_position if partner._shoulders.size() > 1 else theirs + up
-		_solve_arm(0, 1.0, mine.lerp(shoulder, 0.75) + up * 0.02 * size, _forearm, 1.0, Vector3.ZERO)
-		var out := (theirs - mine).cross(up).normalized()
-		_solve_arm(1, -1.0, mine.lerp(theirs, 0.5) + up * (_hip_height + 0.25) * size - out * 0.16 * size, _forearm + 0.04, 1.0, Vector3.ZERO)
-		_curl[1] = 0.9
+		var shoulder_height := (_shoulders[0].global_position.y + _shoulders[1].global_position.y) * 0.5
+		var toward := theirs - mine
+		toward.y = 0.0
+		toward = toward.normalized()
+		var lead_left := toward.cross(up).normalized() * -1.0
+		if not leads:
+			lead_left = -lead_left
+		var joined := (mine + theirs) * 0.5 + lead_left * 0.34 * size
+		joined.y = shoulder_height + 0.02 * size
+		var far_side: Vector3 = partner.global_basis.z.normalized()
+		if leads:
+			_solve_arm(0, 1.0, joined, _forearm, 1.0, (left * 0.5 + Vector3.DOWN).normalized())
+			var blade: Vector3 = partner._shoulders[0].global_position - far_side * 0.08 * size + Vector3.DOWN * 0.05 * size
+			_solve_arm(1, -1.0, blade, _forearm, 1.0, (-left + Vector3.DOWN).normalized())
+			_curl[1] = 0.3
+		else:
+			_solve_arm(1, -1.0, joined, _forearm, 1.0, (-left * 0.5 + Vector3.DOWN).normalized())
+			var top: Vector3 = partner._shoulders[1].global_position + Vector3.UP * 0.03 * size - toward * 0.03 * size
+			_solve_arm(0, 1.0, top, _forearm, 1.0, (left + Vector3.DOWN).normalized())
+			_curl[0] = 0.5
+		_curl[0 if leads else 1] = 0.9
+		_pose_fingers(0, 1.0)
 		_pose_fingers(1, -1.0)
 
 

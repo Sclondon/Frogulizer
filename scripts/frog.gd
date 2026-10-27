@@ -22,6 +22,10 @@ const BODIES := {
 	"squat": [preload("res://models/frog_squat.glb"), preload("res://models/frog_squat_lo.glb")],
 }
 
+## Whether the frogs wear their clothes (the camera desk's Look tab). Off while the bodies are
+## being worked on: the clothes are to be redone once the body is right.
+static var clothed := false
+
 var look: Dictionary = {}
 var part := ""
 var dance := "bounce"
@@ -64,13 +68,35 @@ func _ready() -> void:
 	rig.blink_gap = look.get("blink_gap", 0.0 if randf() < 0.7 else randf_range(0.03, 0.12))
 	add_child(rig)
 	rig.top_level = true
-	rig.look = look
+	rig.look = _worn()
 	rig.restyle()
 	FrogToon.apply(rig._figure, look.get("colours", {}), not low)
 	rig.bind_face()
+	# (how long its mouth is drawn: each frog its own)
+	for skin: ShaderMaterial in rig._skin_materials:
+		skin.set_shader_parameter(&"mouth_reach", look.get("mouth", 1.0))
 	home = position
 	facing_yaw = home_yaw
 	_show()
+
+
+## Its look as worn: its clothes, or (not `clothed`) only its skin, warts and all.
+func _worn() -> Dictionary:
+	if clothed:
+		return look
+	var bare := look.duplicate()
+	bare["parts"] = FrogLook.parts_for({"warts": (look.get("parts", {}) as Dictionary).get("warts", "none")})
+	return bare
+
+
+## Dresses or undresses every frog in the scene.
+static func dress_all(tree: SceneTree, on: bool) -> void:
+	clothed = on
+	for node in tree.root.find_children("*", "", true, false):
+		var frog := node as Frog
+		if frog and frog.rig:
+			frog.rig.look = frog._worn()
+			frog.rig.restyle()
 
 
 func frog_rig() -> FrogRig:

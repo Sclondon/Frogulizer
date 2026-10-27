@@ -1,52 +1,65 @@
-// The riverboat's deck, as the boats in Over the Garden Wall have it: warm
-// yellow-orange boards running fore and aft, dark seams between them and butt
-// joints staggered along each, and big soft orange dots scattered over it all.
-// Lit in two flat tones, as the frogs are (Toon), so it sits with them.
+// The riverboat's deck: wooden planks running fore and aft, each its own shade of honey brown with
+// a wavy grain along it and the odd knot, dark seams between them and butt joints staggered along
+// each. Laid in the deck's own space, so the boards go along with the boat. Lit in two flat tones,
+// as the frogs are (FrogToon), so it sits with them.
 shader_type spatial;
 
-uniform vec3 board : source_color = vec3(0.93, 0.62, 0.25);
-uniform vec3 board_alt : source_color = vec3(0.97, 0.70, 0.31);
-uniform vec3 seam : source_color = vec3(0.55, 0.30, 0.12);
-uniform vec3 dot_colour : source_color = vec3(0.91, 0.45, 0.16);
-uniform float board_width = 0.22;
-uniform float board_length = 3.1;
-uniform float dot_spacing = 1.6;
+uniform vec3 board : source_color = vec3(0.74, 0.50, 0.27);
+uniform vec3 board_alt : source_color = vec3(0.86, 0.62, 0.35);
+uniform vec3 grain_colour : source_color = vec3(0.50, 0.30, 0.15);
+uniform vec3 seam : source_color = vec3(0.28, 0.16, 0.08);
+uniform float board_width = 0.2;
+uniform float board_length = 2.6;
 // The deck lights up a little with the music (from the scene: Groove.energy).
 uniform float glow = 0.0;
 
-varying vec3 world;
+varying vec3 local;
 
 void vertex() {
-	world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	local = VERTEX;
 }
 
 float hash(vec2 p) {
 	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
 
+float noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+
 void fragment() {
-	vec2 at = world.xz;
+	vec2 at = local.xz;
+	// how big a pixel is on the deck (m): far off, where a board is only a pixel or two across, each
+	// fine thing goes over to its average, so the boards do not shimmer as the boat moves
+	float px = max(length(fwidth(at)), 0.0005);
+	float far = smoothstep(0.004, 0.02, px);
 	float row = floor(at.x / board_width);
-	float along = at.y / board_length + hash(vec2(row, 3.0)) * 7.0;
+	float offset = hash(vec2(row, 3.0)) * 7.0;
+	float along = at.y / board_length + offset;
 	float plank = floor(along);
-	vec3 colour = mix(board, board_alt, hash(vec2(row, plank)) * 0.8);
-	// (a grain of faint streaks along each board)
-	colour *= 0.94 + 0.06 * sin(at.x * 180.0 + hash(vec2(row, plank)) * 30.0 + sin(at.y * 3.0) * 2.0);
-	float across = abs(fract(at.x / board_width) - 0.5) * board_width;
-	float end = abs(fract(along) - 0.5) * board_length;
-	float px = max(fwidth(at.x), 0.0005);
-	float line = 1.0 - smoothstep(board_width * 0.5 - 0.012 - px, board_width * 0.5 - 0.012 + px, board_width * 0.5 - across);
-	float joint = 1.0 - smoothstep(board_length * 0.5 - 0.012 - px, board_length * 0.5 - 0.012 + px, board_length * 0.5 - end);
-	// The dots: one in each cell of a jittered grid, some bigger, some smaller
-	vec2 cell = floor(at / dot_spacing);
-	vec2 centre = (cell + 0.2 + 0.6 * vec2(hash(cell), hash(cell + 17.0))) * dot_spacing;
-	float radius = dot_spacing * (0.12 + 0.08 * hash(cell + 5.0));
-	float spot = 1.0 - smoothstep(radius - px * 1.5, radius + px * 1.5, length((at - centre) * vec2(1.0, 0.7)));
-	spot *= step(0.25, hash(cell + 9.0));
-	colour = mix(colour, dot_colour, spot * 0.85);
-	colour = mix(colour, seam, max(line, joint) * 0.75);
+	float shade = mix(hash(vec2(row, plank)), 0.5, smoothstep(0.02, 0.06, px));
+	vec3 colour = mix(board, board_alt, shade);
+	// The grain: long wavy lines along the board
+	float across = fract(at.x / board_width);
+	float wave = across * 7.0 + noise(vec2(at.y * 1.3, row * 3.1)) * 2.2 + shade * 13.0;
+	float grain = smoothstep(0.8, 1.0, abs(sin(wave * 3.14159)));
+	colour = mix(colour, grain_colour, mix(grain, 0.12, far) * 0.32);
+	// A knot now and then
+	vec2 knot_at = vec2((row + 0.25 + 0.5 * hash(vec2(row, plank + 4.0))) * board_width,
+			(plank + 0.2 + 0.6 * hash(vec2(row, plank + 9.0)) - offset) * board_length);
+	float knot = step(0.8, hash(vec2(row * 1.7, plank))) * (1.0 - smoothstep(0.014, 0.03, length((at - knot_at) * vec2(1.0, 0.4))));
+	colour = mix(colour, grain_colour * 0.85, knot * (1.0 - far));
+	// The seams between the boards and the joints at their ends
+	float side_gap = min(across, 1.0 - across) * board_width;
+	float end_gap = min(fract(along), 1.0 - fract(along)) * board_length;
+	float seam_line = 1.0 - smoothstep(0.007 - px, 0.007 + px, min(side_gap, end_gap));
+	// (a seam is 1.4 cm of every 20: far off, that much of the colour)
+	colour = mix(colour, seam, mix(seam_line, 0.075, smoothstep(0.006, 0.02, px)) * 0.85);
 	ALBEDO = colour;
-	EMISSION = colour * glow * 0.12;
+	EMISSION = colour * glow * 0.1;
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
 }

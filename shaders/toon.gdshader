@@ -16,6 +16,11 @@ uniform float use_pale = 0.0;
 // at the bottom of it. `mouth` turns it on, `open` says how far open (0..1).
 uniform float mouth = 0.0;
 uniform float open = 0.0;
+// The corners: up in a smile (1), down in a frown (-1). The line runs on a little past the
+// corners of the cut, curling, as a drawn mouth does.
+uniform float smile = 0.0;
+// How long this frog's drawn mouth is, against the cut of it (1): shorter or longer, each its own.
+uniform float mouth_reach = 1.0;
 uniform float mouth_band = 0.02;
 uniform vec3 mouth_colour : source_color = vec3(0.30, 0.07, 0.09);
 uniform vec3 tongue_colour : source_color = vec3(0.86, 0.46, 0.48);
@@ -38,25 +43,25 @@ uniform float glint_size = 120.0;
 uniform float ambient = 0.6;
 
 void fragment() {
-	float paler = use_pale * smoothstep(0.47, 0.53, COLOR.r);
+	vec3 painted = COLOR.rgb;
+	float paler = use_pale * smoothstep(0.42, 0.58, painted.r);
 	vec3 colour = mix(albedo, pale, paler);
 	// (where it is against the mouth comes in the vertex colour's green and blue: tools/build_frogs.py add_paleness)
-	float round_mouth = (COLOR.g - 0.5) * 2.6;
-	if (mouth > 0.5 && abs(round_mouth) < 1.25) {
+	float round_mouth = (painted.g - 0.5) * 4.0;
+	if (mouth > 0.5 && abs(round_mouth) < 1.9) {
 		float a = abs(round_mouth);
-		float d = COLOR.b * 0.08 - 0.03;
+		float d = painted.b * 0.08 - 0.03;
 		float px = max(fwidth(d), 0.00005);
 		// the line, tapering towards the corners, which curl up a little
-		float curl = -0.007 * smoothstep(0.82, 1.08, a);
+		float corner = smoothstep(0.95 * mouth_reach, 1.25 * mouth_reach, a);
+		float curl = -0.007 * smoothstep(0.82, 1.08, a) - smile * 0.03 * corner * corner;
 		// (never thinner than about a pixel and a half, however far off)
-		float width = max(0.0022 * (1.0 - smoothstep(0.95, 1.12, a)) + 0.0006, px * 0.8);
-		float ink = (1.0 - smoothstep(width - px, width + px, abs(d - curl))) * step(a, 1.12);
-		// the inside, once it is open: dark at the top, the tongue at the bottom, a lip of ink below
-		float inside = step(0.0, d) * step(d, mouth_band) * step(a, 1.0) * smoothstep(0.02, 0.1, open);
-		vec3 hollow = mix(mouth_colour, tongue_colour, smoothstep(0.55, 0.85, d / mouth_band));
-		colour = mix(colour, hollow, inside);
-		float lower = (1.0 - smoothstep(max(0.0012, px) - px, max(0.0012, px) + px, abs(d - mouth_band))) * step(a, 1.0) * smoothstep(0.02, 0.1, open);
-		colour = mix(colour, ink_colour, max(ink, lower));
+		float reach = mouth_reach * (1.08 + 0.12 * abs(smile));
+		float width = max(0.0045 * (1.0 - smoothstep(reach - 0.17, reach, a)) + 0.0012, px * 1.2);
+		float ink = (1.0 - smoothstep(width - px, width + px, abs(d - curl))) * step(a, reach);
+		// (the skin is cut along the line, so when the jaw drops both lips keep it: the inside of
+		// the mouth is a real one, behind)
+		colour = mix(colour, ink_colour, ink);
 	}
 	ALBEDO = colour;
 	ROUGHNESS = 1.0;

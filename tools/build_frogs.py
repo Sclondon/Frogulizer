@@ -40,10 +40,13 @@ import sys
 
 import bmesh
 import bpy
+import mathutils.kdtree
 from mathutils import Matrix, Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import build_character as kit  # noqa: E402
+import numpy as np  # noqa: E402
+import sdf  # noqa: E402  (signed distance field modelling: the skin)
 
 X, Y, Z = kit.X, kit.Y, kit.Z
 blend = kit.blend
@@ -54,9 +57,9 @@ kit.PREVIEW_DIR = None  # (the kit's own previews are the boy's; these are below
 
 BODIES = {
 # (Short stout bodies on long thin limbs: `limb` thins the arms and legs.)
-    "round": {"thigh": 0.26, "shin": 0.27, "tall": 0.82, "broad": 1.12, "upper_arm": 0.21, "forearm": 0.2, "head": 1.0, "limb": 0.8},
-    "slim": {"thigh": 0.29, "shin": 0.3, "tall": 0.95, "broad": 0.92, "upper_arm": 0.22, "forearm": 0.21, "head": 0.95, "limb": 0.75},
-    "squat": {"thigh": 0.22, "shin": 0.23, "tall": 0.72, "broad": 1.32, "upper_arm": 0.19, "forearm": 0.18, "head": 1.08, "limb": 0.85},
+    "round": {"mouth": 0.095, "thigh": 0.26, "shin": 0.27, "tall": 0.82, "broad": 1.12, "upper_arm": 0.21, "forearm": 0.2, "head": 1.0, "limb": 0.8},
+    "slim": {"mouth": 0.082, "thigh": 0.29, "shin": 0.3, "tall": 0.95, "broad": 0.92, "upper_arm": 0.22, "forearm": 0.21, "head": 0.95, "limb": 0.75},
+    "squat": {"mouth": 0.112, "thigh": 0.22, "shin": 0.23, "tall": 0.72, "broad": 1.32, "upper_arm": 0.19, "forearm": 0.18, "head": 1.08, "limb": 0.85},
 }
 
 ANKLE_Y = 0.05
@@ -73,14 +76,19 @@ THIGH = SHIN = HIP_X = HIP_Y = KNEE_Y = CROTCH = TALL = BROAD = HEAD_SIZE = LIMB
 HIPS = SPINE = CHEST = NECK = HEAD = SHOULDER = HEAD_ORIGIN = Vector()
 UPPER_ARM = FOREARM = ELBOW_X = WRIST_X = HAT_Y = HAT_Z = 0.0
 TORSO = []
+# The skin's distance field, once made (skin_mesh): the clothes take their weights from it.
+SKIN_FIELD = None
 
 
 def shape_body(name):
     global THIGH, SHIN, HIP_X, HIP_Y, KNEE_Y, CROTCH, TALL, BROAD, HEAD_SIZE, HIPS, SPINE, CHEST, NECK, HEAD, SHOULDER
-    global HEAD_ORIGIN, UPPER_ARM, FOREARM, ELBOW_X, WRIST_X, HAT_Y, HAT_Z, TORSO, LIMB
+    global HEAD_ORIGIN, UPPER_ARM, FOREARM, ELBOW_X, WRIST_X, HAT_Y, HAT_Z, TORSO, LIMB, MOUTH_HALF
     body = BODIES[name]
+    MOUTH_HALF = body["mouth"]
     THIGH, SHIN = body["thigh"], body["shin"]
     TALL, BROAD, HEAD_SIZE, LIMB = body["tall"], body["broad"], body["head"], body["limb"]
+    # (the heads smaller than they were, after the model sheets: a wedge on a tall trunk)
+    HEAD_SIZE *= 0.87
     UPPER_ARM, FOREARM = body["upper_arm"], body["forearm"]
     HIP_X = 0.078 * (0.6 + 0.4 * BROAD)
     HIP_Y = ANKLE_Y + SHIN + THIGH
@@ -96,9 +104,11 @@ def shape_body(name):
     WRIST_X = ELBOW_X + FOREARM
     TORSO = [(T(h), rx * BROAD, rz * (0.6 + 0.4 * BROAD), z) for h, rx, rz, z in TORSO_ROUND]
     # The head: drawn about the middle of its mouth (head space, below), which sits here
-    HEAD_ORIGIN = Vector((0.0, T(0.495), 0.0))
-    hat = head_point(Vector((0.0, 0.104, -0.03)))
+    # (carried forward of the trunk, the snout jutting, as on the sheets: no hump behind it)
+    HEAD_ORIGIN = Vector((0.0, T(0.5), 0.035))
+    hat = head_point(Vector((0.0, 0.09, -0.03)))
     HAT_Y, HAT_Z = hat.y, hat.z
+    TORSO = measured_torso()
 
 
 def T(height):
@@ -124,7 +134,7 @@ MATERIALS = [
     ("eye_r", (0.95, 0.93, 0.82)),
     ("pupil", (0.04, 0.04, 0.05)),
     ("ink", (0.05, 0.04, 0.04)),
-    ("mouth", (0.36, 0.10, 0.12)),
+    ("mouth", (0.2, 0.04, 0.06)),
     ("tongue", (0.86, 0.46, 0.48)),
     ("coat", (0.42, 0.13, 0.12)),
     ("trim", (0.84, 0.66, 0.24)),
@@ -222,20 +232,22 @@ JAWLINE = [(0.178, 0.05, 0.006, -0.018), (0.158, 0.094, 0.006, -0.036), (0.125, 
            (0.045, 0.149, 0.006, -0.095), (0.005, 0.153, 0.005, -0.108), (-0.03, 0.15, -0.006, -0.12), (-0.07, 0.136, -0.04, -0.13),
            (-0.10, 0.115, -0.07, -0.135)]
 JAW_HINGE = Vector((0.0, -0.01, -0.06))
-EYE_CENTRE = Vector((0.082, 0.1, 0.05))
-EYE_WAY = Vector((0.5, 0.18, 0.85)).normalized()
-EYE_RADIUS = 0.036
+EYE_CENTRE = Vector((0.08, 0.078, 0.005))
+EYE_WAY = Vector((0.5, 0.1, 0.86)).normalized()
+EYE_RADIUS = 0.025
 # How far round the eyeball its visible cap reaches from the middle (the rest is under the skin)
-EYE_CAP = math.radians(72.0)
+EYE_CAP = math.radians(68.0)
+# How far round (from the middle) the white goes; past it the cap is lid, under the socket's rim
+EYE_WHITE = math.radians(64.0)
 LID_RADIUS = EYE_RADIUS + 0.005
 # The lid at rest covers from behind the eye round over the top to this angle (from straight up,
 # towards the front): over the top of the pupil, the sleepy look. FrogRig droops it further.
 LID_EDGE = math.radians(40.0)
-PUPIL_SIZE = Vector((0.021, 0.019, 0.006))
+PUPIL_SIZE = Vector((0.015, 0.013, 0.004))
 # (it lies in the slit, so it slides out between the lips)
 TONGUE_ROOT = Vector((0.0, -0.002, -0.02))
 TONGUE_LENGTH = 0.40
-TONGUE_JOINTS = (0.0, 0.11, 0.22, 0.31)
+TONGUE_JOINTS = (0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35)
 
 
 def smile(p):
@@ -258,62 +270,269 @@ def eye_way(side):
     return Vector((side * EYE_WAY.x, EYE_WAY.y, EYE_WAY.z))
 
 
-def skin_mesh():
-    """All the bare skin as one surface, fused: the head with its jaw and throat, the back of the
-    head running down into the back, the trunk, the arms, hands and fingers, the legs, feet, toes
-    and webs, as the frogs in the concept art are one smooth shape. The mouth is not cut: the skin
-    shader draws its line, and FrogRig drops the jaw (all that is below the line and in front of
-    its corners) to open it, stretching a thin band under the line which the shader paints as the
-    inside of the mouth (see `mouth_coords`). How pale the skin is goes in its vertex colour."""
-    b = kit.Builder()
-
-    def head():
-        loft(b, [section(z, half, top, bottom, flat) for z, half, top, bottom, flat in CRANIUM])
-        loft(b, [section(z, half, top, bottom, 0.85, flat_top=True) for z, half, top, bottom in JAWLINE])
-        for side in sides():
-            e = eye_centre(side)
-            # the socket the eye sits in
-            b.ellipsoid(e - eye_way(side) * 0.012 + Vector((0.0, -0.01, 0.0)), Vector((0.046, 0.04, 0.046)), None, 16, 9)
-            # the nostrils, small bumps on the snout
-            b.ellipsoid(Vector((side * 0.024, 0.058, 0.168)), Vector((0.01, 0.007, 0.008)), None, 8, 4)
-        b.ellipsoid(NAPE[0], NAPE[1], None, 20, 10)
-    in_head(b, head)
-    b.tube([kit.upright(0.0, y, z, rx, rz) for y, rx, rz, z in TORSO], 24)
-    arms(b)
-    hands(b)
-    fingers(b)
-    legs(b)
-    feet(b)
-    webs(b)
-    mesh = kit.fused(b, (0.006, 3, 5000) if kit.LOW else (0.0028, 6, 16000))
-    for polygon in mesh.polygons:
-        polygon.material_index = SKIN
-    return mesh
-
-
-def mouth_at(q):
-    """Where a point (head space) is against the mouth, for the skin shader to draw it by: how far
-    round it (-1 at one corner, 1 at the other; well beyond for anywhere else), and how far below
-    its line. Written in the vertex colour (see `add_paleness`), taken where each point rests."""
-    flat = Vector((q.x, 0.0, q.z - SLIT_MIDDLE.z))
-    a = math.atan2(flat.x, flat.z) / SLIT_SWEEP
-    # (behind the head, or far from the mouth's height, nothing: well away)
-    if flat.length < 0.05 or flat.length > 0.21 or abs(q.y) > 0.08:
-        return (4.0, 1.0)
-    return (a, lip_y(q) - q.y)
-
-
-# The mouth: round the head from one corner to the other about this middle (head space), this far
-# each way from straight ahead.
-SLIT_MIDDLE = Vector((0.0, 0.0, 0.025))
-SLIT_SWEEP = math.radians(112.0)
+# The head, as shapes in head space (the middle of the mouth at the origin): a long wedge of skull
+# over a rounder jaw and throat, blended only a little where they meet, so that a crease forms
+# there, long and low from the tip of the snout back to the corners under the eyes: the mouth.
+# Behind the corners the back of the head covers the crease over, so it does not go round.
+SKULL = ((0.0, 0.018, 0.045), (0.152, 0.074, 0.165))
+JAW = ((0.0, -0.058, 0.012), (0.148, 0.092, 0.176))
+NAPE = ((0.0, -0.07, -0.02), (0.13, 0.075, 0.06))
+MOUTH_FRONT = 0.19
+MOUTH_CORNER = 0.04
+# How far either side of the middle the mouth goes: its corners are short of the sides of the head
+MOUTH_HALF = 0.095
 # The band under the mouth's line that stretches when the jaw drops (head space, metres).
 MOUTH_BAND = 0.02
 
 
-def lip_y(q):
-    """The height of the mouth's line at a point (head space): level, rising a little at the corners."""
-    return smile(Vector((q.x, 0.0, q.z))).y
+def head_shape(centre, radii):
+    """An ellipsoid in head space, as a shape in the model."""
+    return sdf.ellipsoid(tuple(head_point(Vector(centre))), tuple(np.array(radii) * HEAD_SIZE))
+
+
+def skull_and_jaw(q):
+    """How far a point (head space) is from the skull's surface and from the jaw's (as their shapes have it)."""
+    (sc, sr), (jc, jr) = SKULL, JAW
+    f = lambda c, r: sdf.ellipsoid(c, r)[1](np.array([q.x]), np.array([q.y]), np.array([q.z]))[0]
+    return f(sc, sr), f(jc, jr)
+
+
+def trunk_and_head(field):
+    """The trunk and the head, into a distance field: the trunk a pear, the belly low and forward,
+    the chest narrowing up into the throat; the head on top of it, no neck between (skull, jaw and
+    the back of the head). (The skin, and what the clothes are fitted round: `measured_torso`.)"""
+    field.add(sdf.ellipsoid(tuple(Vector((0.0, T(0.04), 0.0))), (0.12 * BROAD, 0.085, 0.1)))
+    field.add(sdf.ellipsoid(tuple(Vector((0.0, T(0.17), 0.036))), (0.168 * BROAD, 0.17 * TALL + 0.03, 0.135)), 0.06)
+    # (the upper back flat, going straight up into the back of the head)
+    field.add(sdf.ellipsoid(tuple(Vector((0.0, T(0.36), 0.012))), (0.148 * BROAD, 0.13 * TALL + 0.02, 0.105)), 0.08)
+    field.add(head_shape(*SKULL), 0.07)
+    # (blended a little, so the crease of the mouth is soft: the skin shader draws its line)
+    field.add(head_shape(*JAW), 0.035)
+    field.add(head_shape(*NAPE), 0.08)
+
+
+def measured_torso():
+    """The trunk's rings, (height, half width, half depth, forward), as the skin really is: cut
+    across the trunk and head at each height of TORSO_ROUND and an ellipse fitted round the cut,
+    big enough to hold all of it. The clothes are made round these, so nothing of the skin (the
+    back of the head, the belly) comes through them."""
+    field = sdf.Field((-0.42, CROTCH - 0.04, -0.32), (0.42, HEAD_ORIGIN.y + 0.06, 0.36), 0.005)
+    trunk_and_head(field)
+    xs = np.arange(-0.42, 0.42, 0.003)
+    zs = np.arange(-0.32, 0.36, 0.003)
+    gx, gz = np.meshgrid(xs, zs, indexing="ij")
+    gx, gz = gx.ravel(), gz.ravel()
+    rings = []
+    # (from a little below the crotch: the seat hangs down between the legs' tops)
+    for h, rx0, rz0, z0 in [(-0.07, 0.04, 0.04, 0.0), (-0.045, 0.06, 0.05, 0.0), (-0.02, 0.08, 0.07, 0.0)] + TORSO_ROUND:
+        y = T(h)
+        d = field.sample(np.stack([gx, np.full_like(gx, y), gz], -1))
+        inside = d < 0.0
+        if not inside.any():
+            rings.append((y, rx0 * BROAD, rz0 * (0.6 + 0.4 * BROAD), z0))
+            continue
+        x, z = gx[inside], gz[inside]
+        rx = max(float(np.abs(x).max()), 0.01)
+        zc = float(z.max() + z.min()) * 0.5
+        rz = max(float(z.max() - z.min()) * 0.5, 0.01)
+        grow = math.sqrt(float(((x / rx) ** 2 + ((z - zc) / rz) ** 2).max()))
+        rings.append((y, rx * grow, rz * grow, zc))
+    return rings
+
+
+def skin_point(p):
+    """The nearest point of the skin to `p` (for the clothes to move as the skin under them does)."""
+    if SKIN_FIELD is None:
+        return p
+    q = SKIN_FIELD.project(np.array([tuple(p)], dtype=np.float64))[0]
+    return Vector((float(q[0]), float(q[1]), float(q[2])))
+
+
+def skin_normal(p):
+    """Which way the skin faces at (or near) `p`: out along the field's gradient."""
+    if SKIN_FIELD is None:
+        return Vector((0.0, 1.0, 0.0))
+    e = 0.002
+    at = np.array([tuple(p)], dtype=np.float64)
+    grad = [float(SKIN_FIELD.sample(at + np.array(o))[0] - SKIN_FIELD.sample(at - np.array(o))[0]) for o in ((e, 0, 0), (0, e, 0), (0, 0, e))]
+    return Vector(grad).normalized()
+
+
+def skin_mesh():
+    """All the bare skin as one surface: shapes blended and carved like clay in a distance field
+    (tools/sdf.py) and meshed in one piece: the head (skull, jaw and throat, the back of the head),
+    the eyes' mounds with their sockets and the rims of their lids, the nostrils; the trunk; the
+    arms, hands and fingers with round pads; the legs, the long flat feet, toes and webs. The mouth
+    is the crease between skull and jaw: the skin shader draws its line there, and FrogRig drops the
+    jaw to open it (see `mouth_at`). How pale the skin is goes in its vertex colour."""
+    top = HEAD_ORIGIN.y + 0.2 * HEAD_SIZE
+    reach = WRIST_X + PALM + 0.12
+    global SKIN_FIELD
+    field = sdf.Field((-reach, -0.01, -0.22), (reach, top, 0.34), 0.0045 if kit.LOW else 0.0032)
+    SKIN_FIELD = field
+    trunk_and_head(field)
+    for side in sides():
+        e = eye_centre(side)
+        way = eye_way(side)
+        # the mound the eye sits in, the socket it sits in, and the rim of its lids round it
+        # (big enough to cover the eyeball everywhere but its front: from behind and above only
+        # the skin of the mound is seen)
+        field.add(head_shape(tuple(e - way * 0.014), (0.035, 0.033, 0.037)), 0.022)
+        field.cut(sdf.sphere(tuple(head_point(e)), (EYE_RADIUS + 0.002) * HEAD_SIZE), 0.004)
+        # (and the brow filled in behind the rim, or the socket's cut leaves a slit along the top)
+        field.add(head_shape(tuple(e - way * 0.012 + Vector((0.0, 0.016, 0.0))), (0.026, 0.014, 0.022)), 0.012)
+        field.add(sdf.torus(tuple(head_point(e + way * EYE_RADIUS * 0.6)), tuple(way), EYE_RADIUS * 0.82 * HEAD_SIZE, 0.0055 * HEAD_SIZE), 0.012)
+        # a nostril on the snout
+        field.cut(sdf.sphere(tuple(head_point(Vector((side * 0.026, 0.066, 0.17)))), 0.0075 * HEAD_SIZE), 0.004)
+    # The arms: shoulder to elbow to wrist, thin, into the hands
+    for side in sides():
+        shoulder = Vector((side * SHOULDER.x * 0.85, SHOULDER.y, 0.0))
+        elbow = Vector((side * ELBOW_X, SHOULDER.y, 0.0))
+        wrist = hand_wrist(side)
+        field.add(sdf.cone(tuple(shoulder), tuple(elbow), 0.036 * LIMB, 0.026 * LIMB), 0.03)
+        field.add(sdf.cone(tuple(elbow), tuple(wrist), 0.026 * LIMB, 0.02 * LIMB), 0.01)
+        field.add(sdf.ellipsoid(tuple(wrist + Vector((side * PALM * 0.55, -0.002, 0.0))), (PALM * 0.62, 0.012, 0.03)), 0.012)
+        for index, (_z, length, radius, _fan) in enumerate(FINGERS):
+            knuckle, along = finger_line(side, index)
+            tip = knuckle + along * length
+            field.add(sdf.cone(tuple(knuckle - along * 0.01), tuple(tip), radius, radius * 0.8), 0.006)
+            field.add(sdf.sphere(tuple(tip), radius * 1.35), 0.004)
+        root, along = thumb_line(side)
+        field.add(sdf.cone(tuple(root - along * 0.01), tuple(root + along * THUMB_LENGTH), 0.0105, 0.0085), 0.006)
+        field.add(sdf.sphere(tuple(root + along * THUMB_LENGTH), 0.0115), 0.004)
+    # The legs: thigh, shin, and the long flat feet with their toes and webs
+    for side in sides():
+        hip = Vector((side * HIP_X, HIP_Y + 0.02, 0.0))
+        knee = Vector((side * HIP_X, KNEE_Y, 0.004))
+        ankle = Vector((side * HIP_X, ANKLE_Y, 0.0))
+        # (a frog's haunch: the thigh thick where it leaves the body, and blended well into it)
+        field.add(sdf.ellipsoid(tuple(hip + Vector((side * 0.012, -0.015, -0.008))), (0.062 * BROAD ** 0.5, 0.075, 0.06)), 0.05)
+        field.add(sdf.cone(tuple(hip), tuple(knee), 0.064 * LIMB, 0.036 * LIMB), 0.05)
+        field.add(sdf.cone(tuple(knee), tuple(ankle), 0.033 * LIMB, 0.021 * LIMB), 0.012)
+        field.add(sdf.ellipsoid(tuple(ankle + Vector((0.0, -0.03, 0.035))), (0.034, 0.016, 0.06)), 0.02)
+        for root, way, length, radius in toe_lines(side):
+            tip = root + way * length
+            # (from inside the foot, blended well into it, so each toe grows out of the foot)
+            field.add(sdf.cone(tuple(root - way * 0.03), tuple(tip), radius * 1.25, radius * 0.85), 0.018)
+            field.add(sdf.sphere(tuple(tip + Vector((0.0, 0.001, 0.0))), radius * 1.45), 0.004)
+        # the webs: flat between the toes, out to two-thirds of the way along them
+        lines = toe_lines(side)
+        for (r1, w1, l1, _a), (r2, w2, l2, _b) in zip(lines, lines[1:]):
+            middle = (r1 + w1 * l1 * 0.4 + r2 + w2 * l2 * 0.4) * 0.5
+            way = (w1 + w2).normalized()
+            across = Vector((way.z, 0.0, -way.x))
+            field.add(sdf.ellipsoid(tuple(middle), (0.03, 0.004, 0.045),
+                                    np.array([tuple(across), (0.0, 1.0, 0.0), tuple(way)]).T), 0.006)
+    points, quads = field.mesh(smoothing=3)
+    bm = bmesh.new()
+    sdf.to_bmesh(bm, points, quads, kit.to_blender)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    mesh = bpy.data.meshes.new("skin")
+    bm.to_mesh(mesh)
+    bm.free()
+    # Down to a budget of triangles (the quads are many and even; most can go)
+    part = bpy.data.objects.new("skin", mesh)
+    bpy.context.collection.objects.link(part)
+    decimate = part.modifiers.new("decimate", "DECIMATE")
+    decimate.ratio = min(1.0, (5000 if kit.LOW else 11000) / max(len(mesh.polygons) * 2, 1))
+    bpy.context.view_layer.update()
+    result = bpy.data.meshes.new_from_object(part.evaluated_get(bpy.context.evaluated_depsgraph_get()))
+    bpy.data.objects.remove(part)
+    bpy.data.meshes.remove(mesh)
+    for polygon in result.polygons:
+        polygon.material_index = SKIN
+    cut_mouth(result)
+    return result
+
+
+def cut_mouth(mesh):
+    """Cuts the skin open along the mouth, from corner to corner, so that when the jaw drops it
+    opens a real mouth (the dark inside, `mouth_bag`, and the tongue showing through) instead of
+    stretching the skin. The cut follows the crease between skull and jaw exactly: a point is put
+    wherever an edge of the mesh crosses it, and they are joined across each face, so the lips are
+    clean curves, not the zigzag of the triangles. Then the lower lip's edge is let down a hair and
+    the upper's up, so that the weights know which goes with the jaw (see `weights`)."""
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+
+    def where(co):
+        q = head_space(kit.from_blender(co))
+        skull, jaw = skull_and_jaw(q)
+        along = mouth_along(q)
+        return (along < 1.0 and abs(q.y) < 0.08 and abs(q.x) < 0.2), skull - jaw
+
+    def snap(co):
+        # (moved across the crease until the skull and the jaw are as far from it)
+        q = head_space(kit.from_blender(co))
+        for _ in range(4):
+            skull, jaw = skull_and_jaw(q)
+            d = skull - jaw
+            e = 0.0005
+            grad = Vector([(lambda s, j: s - j)(*skull_and_jaw(q + Vector(o))) - d for o in ((e, 0, 0), (0, e, 0), (0, 0, e))]) / e
+            if grad.length_squared < 1e-9:
+                break
+            q = q - grad * (d / grad.length_squared)
+        return kit.to_blender(head_point(q))
+
+    level = {vert: where(vert.co) for vert in bm.verts}
+    line = set()
+    for edge in list(bm.edges):
+        a, b = edge.verts
+        (in_a, d_a), (in_b, d_b) = level[a], level[b]
+        if not (in_a and in_b) or (d_a > 0.0) == (d_b > 0.0):
+            continue
+        _edge, vert = bmesh.utils.edge_split(edge, a, d_a / (d_a - d_b))
+        vert.co = snap(vert.co)
+        level[vert] = (True, 0.0)
+        line.add(vert)
+    for face in list(bm.faces):
+        on = [vert for vert in face.verts if vert in line]
+        if len(on) == 2 and not any(edge.other_vert(on[0]) == on[1] for edge in on[0].link_edges):
+            bmesh.ops.connect_verts(bm, verts=on)
+    cut = [edge for edge in bm.edges if edge.verts[0] in line and edge.verts[1] in line and len(edge.link_faces) == 2]
+    bmesh.ops.split_edges(bm, edges=cut)
+    nudge = 0.0002 * HEAD_SIZE
+    for vert in bm.verts:
+        if not vert.is_boundary:
+            continue
+        downs = [where(face.calc_center_median())[1] > 0.0 for face in vert.link_faces]
+        if not downs:
+            continue
+        down = sum(downs) * 2 > len(downs)
+        p = kit.from_blender(vert.co)
+        vert.co = kit.to_blender(p + Vector((0.0, -nudge if down else nudge, 0.0)))
+    bm.normal_update()
+    bm.to_mesh(mesh)
+    bm.free()
+
+
+def mouth_bag(b):
+    """The inside of the mouth: a dark pouch inside the head, behind the lips, its top half going
+    with the head and its bottom with the jaw. Hidden while the mouth is shut."""
+    in_head(b, lambda: b.ellipsoid(Vector((0.0, -0.014, 0.045)), Vector((0.118, 0.05, 0.13)), None, 18, 9))
+
+
+def mouth_along(q):
+    """How far round the mouth a point (head space) is: 0 at the middle of the snout, 1 at a corner,
+    whichever comes first going back (MOUTH_CORNER) or out to the side (MOUTH_HALF)."""
+    return max((MOUTH_FRONT - q.z) / (MOUTH_FRONT - MOUTH_CORNER), abs(q.x) / MOUTH_HALF)
+
+
+def mouth_at(q):
+    """Where a point (head space) is against the mouth, for the skin shader to draw it and FrogRig
+    to open it by: how far round it (from 0 at the tip of the snout to 1 at a corner, negative on
+    its right; well beyond 1 anywhere else), and how far below its line, which is the crease
+    between skull and jaw: their two distances, the skull's less the jaw's. Written in the vertex
+    colour (see `add_paleness`), taken where each point rests."""
+    skull, jaw = skull_and_jaw(q)
+    below = skull - jaw
+    # (well away from it: far round, but still on the right side of its line, above or below, or
+    # the shader, going between this and a point near the mouth, finds a line where there is none)
+    far = (math.copysign(4.0, q.x if q.x != 0.0 else 1.0), math.copysign(1.0, below))
+    if q.z < MOUTH_CORNER - 0.05 or abs(q.y) > 0.08 or abs(q.x) > 0.2 or abs(below) > 0.04:
+        return far
+    along = mouth_along(q)
+    return (math.copysign(max(along, 0.0), q.x if q.x != 0.0 else 1.0), below)
 
 
 def skin_paint(p, n):
@@ -321,18 +540,20 @@ def skin_paint(p, n):
 
 
 def paleness(p):
-    """How pale the skin is at a point, 0..1, smoothly: the jaw and the throat (below the mouth,
-    forward of the cheeks, from right at the lip), and the front of the belly down to the crotch.
-    Written as a vertex colour; shaders/toon.gdshader cuts it at a half into a clean edge."""
+    """How pale the skin is at a point, 0..1, smoothly: the jaw and the throat (below the mouth's
+    crease, forward of the cheeks), and the front of the belly down to the crotch. Written as a
+    vertex colour; shaders/toon.gdshader cuts it at a half into a clean edge."""
     q = head_space(p)
-    # (the jaw and throat: from the lip down to where the throat meets the chest, not round the back)
-    jaw = blend(0.0, 0.003, lip_y(q) - q.y) * blend(-0.11, -0.05, q.z + 0.35 * min(q.y + 0.02, 0.0)) * blend(-0.22, -0.14, q.y)
+    skull, jaw_distance = skull_and_jaw(q)
+    below = skull - jaw_distance
+    jaw = blend(0.0, 0.004, below) * blend(-0.11, -0.05, q.z + 0.35 * min(q.y + 0.02, 0.0)) * blend(-0.22, -0.14, q.y)
     # (and no wider than the jaw: the arms are at the throat's height)
     jaw *= 1.0 - blend(0.13, 0.165, abs(q.x))
     centre, u, _v = ring_at(TORSO, min(max(p.y, TORSO[0][0]), TORSO[-1][0]))
     around = abs(math.atan2(p.x, p.z - centre.z + 0.04))
     trunk = (1.0 - blend(0.8, 1.05, around)) * blend(CROTCH + 0.01, CROTCH + 0.05, p.y) * (1.0 - blend(u.x + 0.01, u.x + 0.04, abs(p.x)))
-    trunk *= 1.0 - blend(lip_y(q) - 0.002, lip_y(q) + 0.002, q.y)
+    # (up the front to the throat, where the jaw's pale takes over: no green collar between)
+    trunk *= max(blend(-0.002, 0.004, below), 1.0 - blend(-0.06, -0.015, q.y))
     return max(jaw, trunk)
 
 
@@ -363,9 +584,10 @@ def tongue(b):
         steps = 12
         for k in range(steps + 1):
             t = k / steps
-            half = 0.03 * (1.0 - 0.45 * t)
-            rows.append((TONGUE_ROOT + Z * TONGUE_LENGTH * t, X * half, Y * half * 0.42))
-        b.tube(kit.dome(rows[0], -Z, 0.01, 2)[::-1] + rows + kit.dome(rows[-1], Z, 0.016, 3), 12)
+            # (narrow at the root, broadening to a wide round tip; flat, thicker down the middle)
+            half = 0.02 + 0.016 * math.sin(min(t / 0.85, 1.0) * math.pi * 0.5)
+            rows.append((TONGUE_ROOT + Z * TONGUE_LENGTH * t, X * half, Y * (0.011 - 0.003 * t)))
+        b.tube(kit.dome(rows[0], -Z, 0.01, 2)[::-1] + rows + kit.dome(rows[-1], Z, 0.03, 4), 16)
     in_head(b, shapes)
 
 
@@ -388,7 +610,9 @@ def eye_cap(b, side):
                 a = math.tau * k / steps
                 d = across * math.cos(a) + up * math.sin(a)
                 point = e + (way * math.cos(t) + d * math.sin(t)) * EYE_RADIUS
-                uv = (math.sin(t) * math.cos(a) / reach * 0.5 + 0.5, math.sin(t) * math.sin(a) / reach * 0.5 + 0.5)
+                # (by angle from the middle: 1 at the edge of the white, more beyond it)
+                r = t / EYE_WHITE
+                uv = (r * math.cos(a) * 0.5 + 0.5, r * math.sin(a) * 0.5 + 0.5)
                 ring.append((b._vert(point, None), uv))
             made.append(ring)
         faces = []
@@ -552,7 +776,11 @@ def warts(b):
             a = rng.uniform(math.pi * 0.3, math.pi * 1.7)
             found.append((Vector((side * HIP_X + 0.046 * math.sin(a), y, 0.046 * math.cos(a))), rng.uniform(0.007, 0.011)))
     for at, r in found:
-        b.ellipsoid(at, Vector((r, r * 0.8, r)), None, 8, 4)
+        # (on the skin as it really is, half sunk into it: a low dome)
+        on = skin_point(at)
+        if (on - at).length > 0.05:
+            continue
+        b.ellipsoid(on - skin_normal(on) * r * 0.45, Vector((r, r, r)), None, 8, 4)
 
 
 # --- Clothes: each drawn over the bare body, and each an object of its own ---
@@ -672,7 +900,7 @@ def vest_front(b):
 
 def trousers(b, bottom=0.10):
     # (the seat, and up over the belly to under the coat, clear of the skin)
-    b.tube([kit.upright(0.0, CROTCH - 0.02, 0.0, 0.07 * BROAD, 0.07)] + [ring_at(TORSO, T(h), 0.014) for h in (0.02, 0.06, 0.10, 0.14, 0.17)], 20)
+    b.tube([ring_at(TORSO, T(h), 0.014) for h in (-0.07, -0.045, -0.02, 0.02, 0.06, 0.10, 0.14, 0.17)], 20)
     for side in sides():
         thick = 0.8 + 0.2 * BROAD
         leg = [(HIP_Y + 0.05, 0.072 * thick), (HIP_Y - 0.02, 0.07 * thick), (KNEE_Y + THIGH * 0.5, 0.062 * thick), (KNEE_Y, 0.054),
@@ -843,8 +1071,10 @@ def body_weights(p, skirt=0.0):
     left = blend(-0.012, 0.012, p.x)
     shin = blend(KNEE_Y + 0.04, KNEE_Y - 0.04, p.y)
     low = blend(SPINE.y + 0.05, SPINE.y - 0.05, p.y)
-    high = blend(CHEST.y - 0.06, CHEST.y + 0.05, p.y)
-    neck = blend(NECK.y - 0.03, NECK.y + 0.03, p.y) if reach < SHOULDER.x - 0.01 else 0.0
+    # (wide, soft changes from chest to neck to head, so that turning the head bends the skin
+    # over a span, not at a seam)
+    high = blend(CHEST.y - 0.09, CHEST.y + 0.08, p.y)
+    neck = blend(NECK.y - 0.08, NECK.y + 0.05, p.y) * (1.0 - blend(SHOULDER.x - 0.07, SHOULDER.x, reach))
     trunk = (1.0 - arm) * (1.0 - leg)
     result = {
         "hips": trunk * low,
@@ -864,6 +1094,10 @@ def body_weights(p, skirt=0.0):
     for name, share in (("_l", left), ("_r", 1.0 - left)):
         result["thigh" + name] = result.get("thigh" + name, 0.0) + leg * share * (1.0 - shin)
         result["shin" + name] = leg * share * shin
+    # (the front of the belly on its own soft bone)
+    belly = blend(0.0, 0.09, p.z) * (1.0 - blend(0.07, 0.16, abs(p.y - T(0.15)))) * (1.0 - blend(0.07, 0.15, abs(p.x))) * (1.0 - arm) * (1.0 - leg)
+    if belly > 0.0:
+        result = mixed(result, {"belly": 1.0}, belly)
     return result
 
 
@@ -887,7 +1121,8 @@ def line_weights(suffix, lines, p, parent):
 def head_share(p):
     """How much of a point of the skin goes with the head: all of it above the mouth's level, none below the neck."""
     q = head_space(p)
-    return blend(-0.09, -0.02, q.y) * blend(-0.17, -0.12, q.z)
+    # (well down the back and sides of the head, but never out over the shoulders to the arms)
+    return blend(-0.15, -0.01, q.y) * blend(-0.24, -0.08, q.z) * max(blend(-0.06, -0.02, q.y), 1.0 - blend(0.09, 0.13, abs(q.x)))
 
 
 def mixed(a, b, share):
@@ -903,7 +1138,11 @@ def weights(part, p):
     suffix = "_l" if p.x >= 0.0 else "_r"
     side = 1.0 if p.x >= 0.0 else -1.0
     slot = part.split("__")[0]
-    if slot in ("mouth", "lip") or slot.startswith("hat"):
+    if slot == "mouth":
+        # (the bag of the mouth: its bottom half with the jaw)
+        jaw = 1.0 - blend(-0.022, -0.002, head_space(p).y)
+        return {"head": 1.0 - jaw, "jaw": jaw}
+    if slot == "lip" or slot.startswith("hat"):
         return {"head": 1.0}
     if slot == "skin":
         # The hands and fingers, out at the end of the arms
@@ -922,13 +1161,16 @@ def weights(part, p):
         # front of its corners, the jaw; the throat going down to the neck; the rest the body's
         q = head_space(p)
         a, d = mouth_at(q)
-        jaw = blend(0.0, MOUTH_BAND, d) * (1.0 - blend(0.92, 1.12, abs(a))) * blend(-0.17, -0.11, q.y)
+        # (along the cut of the mouth, all or nothing: the lips part; beyond its corners, a blend)
+        cut = 1.0 - blend(0.9, 1.0, abs(a))
+        jaw = (blend(0.0, MOUTH_BAND, d) * (1.0 - cut) + (1.0 if d > 0.0 else 0.0) * cut) * (1.0 - blend(0.92, 1.12, abs(a))) * blend(-0.17, -0.11, q.y)
         # (the throat only: no wider than the jaw, or it takes the shoulders and arms with it)
         throat = blend(-0.25, -0.12, q.y) * blend(-0.2, -0.05, q.z) * (1.0 - blend(0.1, 0.14, abs(q.x))) * (1.0 - head_share(p))
-        under = mixed(mixed(body_weights(p), {"head": 1.0}, head_share(p)), {"neck": 1.0}, throat)
+        under = mixed(mixed(body_weights(p), {"head": 1.0}, head_share(p)), {"throat": 1.0}, throat)
         return mixed(under, {"jaw": 1.0}, jaw)
     if slot == "warts":
-        return mixed(body_weights(p), {"head": 1.0}, head_share(p))
+        # (as the skin under it moves)
+        return weights("skin", skin_point(p))
     if slot in ("jaw", "floor"):
         # The throat, low and behind, stays with the neck
         q = head_space(p)
@@ -959,15 +1201,20 @@ def weights(part, p):
     if part in ("coat__dress", "coat__frock", "coattrim__dress"):
         return body_weights(p, 1.0)
     if part == "coat__tails":
-        return body_weights(p, 1.0 if p.z < -0.08 and p.y < T(0.12) else 0.0)
-    return body_weights(p)
+        if p.z < -0.08 and p.y < T(0.12):
+            return body_weights(p, 1.0)
+    # (anything worn moves as the skin just under it does: the sleeves with the arms, the collar
+    # with the throat, so the skin does not come through when the figure bends)
+    return body_weights(skin_point(p))
 
 
 # --- The skeleton ---
 
 def bones():
     listed = [("hips", HIPS, None), ("spine", SPINE, "hips"), ("chest", CHEST, "spine"), ("neck", NECK, "chest"), ("head", HEAD, "neck"),
-              ("jaw", head_point(JAW_HINGE), "head")]
+              ("jaw", head_point(JAW_HINGE), "head"),
+              # (soft parts, jiggled by FrogRig on springs: the belly and the throat's pouch)
+              ("belly", Vector((0.0, T(0.15), 0.1)), "spine"), ("throat", head_point(Vector((0.0, -0.11, 0.04))), "neck")]
     parent = "jaw"
     for k, along in enumerate(TONGUE_JOINTS):
         listed.append(("tongue%d" % k, head_point(TONGUE_ROOT + Z * TONGUE_LENGTH * along), parent))
@@ -1001,6 +1248,7 @@ def bones():
 BODY = [
     ("skin", None, mesh_part(skin_mesh), None),
     ("tongue", TONGUE, tongue, None),
+    ("mouth", MOUTH, mouth_bag, None),
     ("eye_l", EYE_L, lambda b: eye_cap(b, 1.0), None),
     ("eye_r", EYE_R, lambda b: eye_cap(b, -1.0), None),
 ]
@@ -1099,6 +1347,39 @@ def mouth_region(q):
     return (1.0 - blend(0.0, 0.05, abs(q.y))) * blend(-0.09, -0.04, q.z)
 
 
+def outline_weights(mesh):
+    """How much ink outline each point of the skin has, 0..1 (the vertex colour's alpha; see
+    shaders/outline.gdshader): none in a crease, where the outline's shell would show through
+    the surface in front of it (the mouth, under the jaw, the armpits, between the toes), and
+    none along the mouth, which the skin shader draws."""
+    tree = mathutils.kdtree.KDTree(len(mesh.vertices))
+    for i, vert in enumerate(mesh.vertices):
+        tree.insert(vert.co, i)
+    tree.balance()
+    out = []
+    radius = 0.012
+    for vert in mesh.vertices:
+        near = tree.find_range(vert.co, radius)
+        mean = sum((co for co, _i, _d in near), Vector()) / max(len(near), 1)
+        # (how far the surface round about stands out in front of the point: a hollow)
+        hollow = (mean - vert.co).dot(vert.normal)
+        line = 1.0 - blend(0.00006, 0.0004, hollow)
+        q = head_space(kit.from_blender(vert.co))
+        # (none round the eyes: the creases of the lids would show the shell through as dashes)
+        near_eye = min((q - eye_centre(side)).length for side in sides())
+        line *= blend(0.04, 0.055, near_eye)
+        # (none where the shoulders fold as the chest and neck turn: the shell would show through in dashes)
+        p = kit.from_blender(vert.co)
+        line *= blend(0.07, 0.12, min((p - Vector((side * SHOULDER.x, SHOULDER.y + 0.02, -0.03))).length for side in sides()))
+        if q.z > MOUTH_CORNER - 0.1 and abs(q.y) < 0.09 and abs(q.x) < 0.2:
+            skull, jaw = skull_and_jaw(q)
+            # (and none on the jaw in front of the corners: through the open mouth its line's shell
+            # would show from inside)
+            line *= max(blend(0.035, 0.07, abs(skull - jaw)), 1.0 - blend(-0.12, -0.07, q.z) if skull - jaw < 0.0 else blend(0.09, 0.13, skull - jaw))
+        out.append(line)
+    return out
+
+
 def add_paleness():
     """The body's vertex colour: red how pale (see `paleness`); green and blue where the point is
     against the mouth (`mouth_at`: round it, a / 2.6 + 0.5; below its line, (d + 0.03) / 0.08), for
@@ -1106,11 +1387,12 @@ def add_paleness():
     body = bpy.data.objects.get(NAME_NOW)
     if body is None or body.type != "MESH":
         return
+    lines = outline_weights(body.data)
     colours = body.data.color_attributes.new(name="pale", type="FLOAT_COLOR", domain="POINT")
     for i, vert in enumerate(body.data.vertices):
         p = kit.from_blender(vert.co)
         a, d = mouth_at(head_space(p))
-        colours.data[i].color = (paleness(p), min(max(a / 2.6 + 0.5, 0.0), 1.0), min(max((d + 0.03) / 0.08, 0.0), 1.0), 1.0)
+        colours.data[i].color = (paleness(p), min(max(a / 4.0 + 0.5, 0.0), 1.0), min(max((d + 0.03) / 0.08, 0.0), 1.0), lines[i])
     body.data.color_attributes.active_color_name = "pale"
     body.data.color_attributes.render_color_index = body.data.color_attributes.find("pale")
 
@@ -1133,12 +1415,16 @@ def add_mouth_shapes():
             continue
         side = 1.0 if q.x >= 0.0 else -1.0
         corner = blend(0.07, 0.15, abs(q.x))
-        wide = Vector((side * 0.014 * corner, 0.007 * corner, -0.018 * corner)) * m
+        # (a smile: the corners drawn back and well up, the middle a little down: a curve)
+        # (the line bent all along, the middle dipping and rising to the sides: a frog's mouth goes
+        # round to the sides of its head, so a curve only at the corners is not seen from in front)
+        bend = min(abs(q.x) / 0.15, 1.0) ** 2
+        wide = Vector((side * 0.014 * corner, 0.034 * bend - 0.006, -0.018 * corner)) * m
         front = blend(-0.04, 0.06, q.z)
         gather = Vector((-side * 0.4 * max(abs(q.x) - 0.035, 0.0), 0.0, 0.02 * front)) * m * (0.4 + 0.6 * front)
         keys["wide"].data[i].co = vert.co + kit.to_blender(wide * HEAD_SIZE) - kit.to_blender(Vector())
         keys["round"].data[i].co = vert.co + kit.to_blender(gather * HEAD_SIZE) - kit.to_blender(Vector())
-        frown = Vector((0.0, -0.016 * corner * blend(-0.02, 0.02, -q.y + 0.02), 0.004 * corner)) * m
+        frown = Vector((0.0, -0.03 * bend + 0.006, 0.004 * corner)) * m
         keys["frown"].data[i].co = vert.co + kit.to_blender(frown * HEAD_SIZE) - kit.to_blender(Vector())
 
 
