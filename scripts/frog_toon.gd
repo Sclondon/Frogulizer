@@ -59,8 +59,16 @@ static func apply(model: Node, colours := {}, outline := true) -> void:
 				made.set_shader_parameter(&"use_pale", 1.0)
 				made.set_shader_parameter(&"pale", colours.get("belly", Color(0.62, 0.68, 0.40)))
 			# (no line round the warts: ringed, they would look like holes)
+			var last: Material = made
+			if named == "skin":
+				# (and its inside, round the mouth, as the inside of the mouth: seen over the lower lip)
+				var inside := ShaderMaterial.new()
+				inside.shader = MOUTH
+				inside.set_shader_parameter(&"skin", true)
+				made.next_pass = inside
+				last = inside
 			if outline and not named in NO_LINE and not String(part.name).contains("warts"):
-				made.next_pass = line(colour)
+				last.next_pass = line(colour)
 			part.set_surface_override_material(surface, made)
 
 

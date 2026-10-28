@@ -281,8 +281,18 @@ MOUTH_FRONT = 0.19
 MOUTH_CORNER = 0.04
 # How far either side of the middle the mouth goes: its corners are short of the sides of the head
 MOUTH_HALF = 0.095
-# The band under the mouth's line that stretches when the jaw drops (head space, metres).
-MOUTH_BAND = 0.02
+# How much of the jaw's drop the lower lip has at the corners (all of it in the middle), and how
+# far under it (the mouth's `d`) the chin has all of it again.
+LIP_CORNER = 0.12
+LIP_DEPTH = 0.035
+# How far the middle of the upper lip rises as the mouth opens all the way (the `gape` shape).
+LIP_RISE = 0.016
+
+
+def lip_drop(a):
+    """How much of the jaw's drop the lower lip has, how far round the mouth (`mouth_at`'s a)."""
+    # (round, like the bottom of an oval, not flat and then steep: that opens a box with sloping sides)
+    return LIP_CORNER + (1.0 - LIP_CORNER) * math.sqrt(max(1.0 - min(abs(a), 1.0) ** 2, 0.0))
 
 
 def head_shape(centre, radii):
@@ -528,7 +538,9 @@ def mouth_at(q):
     below = skull - jaw
     # (well away from it: far round, but still on the right side of its line, above or below, or
     # the shader, going between this and a point near the mouth, finds a line where there is none)
-    far = (math.copysign(4.0, q.x if q.x != 0.0 else 1.0), math.copysign(1.0, below))
+    # (and less far in the head than the body: shaders/mouth.gdshader draws the inside of the skin
+    # as the inside of the mouth only in the head, where the open jaw shows it)
+    far = (math.copysign(1.8 if q.y > -0.2 and q.z > -0.16 else 4.0, q.x if q.x != 0.0 else 1.0), math.copysign(1.0, below))
     if q.z < MOUTH_CORNER - 0.05 or abs(q.y) > 0.08 or abs(q.x) > 0.2 or abs(below) > 0.04:
         return far
     along = mouth_along(q)
@@ -1140,7 +1152,9 @@ def weights(part, p):
     slot = part.split("__")[0]
     if slot == "mouth":
         # (the bag of the mouth: its bottom half with the jaw)
-        jaw = 1.0 - blend(-0.022, -0.002, head_space(p).y)
+        # (and less towards its sides, as the lower lip has less: it stays inside the pinched corners)
+        q = head_space(p)
+        jaw = (1.0 - blend(-0.022, -0.002, q.y)) * lip_drop(mouth_along(q))
         return {"head": 1.0 - jaw, "jaw": jaw}
     if slot == "lip" or slot.startswith("hat"):
         return {"head": 1.0}
@@ -1157,13 +1171,18 @@ def weights(part, p):
             shin = blend(0.075, 0.11, p.y)
             toe = blend(TOE.z - 0.02, TOE.z + 0.02, p.z) * (1.0 - shin)
             return {"shin" + suffix: shin, "foot" + suffix: 1.0 - shin - toe, "toe" + suffix: toe}
-        # The head: above the mouth's line, the head; just under it (MOUTH_BAND) and on down, in
+        # The head: above the mouth's line, the head; under it (see `lip_drop`) and on down, in
         # front of its corners, the jaw; the throat going down to the neck; the rest the body's
         q = head_space(p)
         a, d = mouth_at(q)
-        # (along the cut of the mouth, all or nothing: the lips part; beyond its corners, a blend)
+        # (along the cut of the mouth the lips part, the lower lip going all the way with the jaw in
+        # the middle and less and less towards the corners, which stay pinched: an open mouth is a
+        # rounded D, not a box with skin stretched up its sides; the chin under it all the jaw's.
+        # Beyond its corners, a blend)
         cut = 1.0 - blend(0.9, 1.0, abs(a))
-        jaw = (blend(0.0, MOUTH_BAND, d) * (1.0 - cut) + (1.0 if d > 0.0 else 0.0) * cut) * (1.0 - blend(0.92, 1.12, abs(a))) * blend(-0.17, -0.11, q.y)
+        lip = lip_drop(a)
+        lower = lip + (1.0 - lip) * blend(0.0, LIP_DEPTH, d) if d > 0.0 else 0.0
+        jaw = (lower * blend(0.0, 0.006, d) * (1.0 - cut) + lower * cut) *(1.0 - blend(0.92, 1.12, abs(a))) * blend(-0.17, -0.11, q.y)
         # (the throat only: no wider than the jaw, or it takes the shoulders and arms with it)
         throat = blend(-0.25, -0.12, q.y) * blend(-0.2, -0.05, q.z) * (1.0 - blend(0.1, 0.14, abs(q.x))) * (1.0 - head_share(p))
         under = mixed(mixed(body_weights(p), {"head": 1.0}, head_share(p)), {"throat": 1.0}, throat)
@@ -1401,14 +1420,15 @@ def add_paleness():
 
 def add_mouth_shapes():
     """`wide`: the corners drawn back, out and up (E, I, a grin). `round`: the lips gathered in and
-    pushed forward (O, U, a whistle). `frown`: the corners pulled down (doubt, dismay). On the body
+    pushed forward (O, U, a whistle). `frown`: the corners pulled down (doubt, dismay). `gape`: the
+    upper lip arched, with the jaw (FrogRig puts it on as far as the jaw is open). On the body
     object only (the clothes do not reach the mouth)."""
     body = bpy.data.objects.get(NAME_NOW)
     if body is None or body.type != "MESH":
         return
     body.shape_key_add(name="Basis", from_mix=False)
     keys = {}
-    for key in ("wide", "round", "frown"):
+    for key in ("wide", "round", "frown", "gape"):
         keys[key] = body.shape_key_add(name=key, from_mix=False)
     for i, vert in enumerate(body.data.vertices):
         q = head_space(kit.from_blender(vert.co))
@@ -1428,6 +1448,13 @@ def add_mouth_shapes():
         keys["round"].data[i].co = vert.co + kit.to_blender(gather * HEAD_SIZE) - kit.to_blender(Vector())
         frown = Vector((0.0, -0.045 * bend + 0.008, 0.004 * corner)) * m
         keys["frown"].data[i].co = vert.co + kit.to_blender(frown * HEAD_SIZE) - kit.to_blender(Vector())
+        # (the upper lip arched as the jaw drops, most in the middle, none at the corners; the skin
+        # above it giving way, less and less going up)
+        a, d = mouth_at(q)
+        if d <= 0.0 and abs(a) < 1.0:
+            arch = 1.0 - abs(a) ** 2
+            gape = Vector((0.0, LIP_RISE * arch * (1.0 - blend(0.0, 0.035, -d)), 0.0))
+            keys["gape"].data[i].co = vert.co + kit.to_blender(gape * HEAD_SIZE) - kit.to_blender(Vector())
 
 
 class _Scene:

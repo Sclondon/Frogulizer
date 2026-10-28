@@ -42,6 +42,9 @@ Read `README.md` first. A music visualiser: a frog band on a riverboat, a dancin
 - Dances: `FrogRig._dance` (made in code) and `FrogRig.MOVES` (captured from life: GameCommon's `moves/`, CMU motion
   capture, brought in and made over with Character Studio's `tools/import_bvh.gd`); crowd mix: `Crowd._pick_dance`
   (about two in three dance a captured one), `count`, `low_from`.
+- The open mouth's shape: `build_frogs.py` `lip_drop` (`LIP_CORNER`, `LIP_DEPTH`: corners pinched, a rounded U) and
+  `LIP_RISE` (the `gape` shape); `FrogRig.JAW_SLIDE` (the jaw slides forward as it opens, or the chin folds the
+  throat up over the mouth). The inside of the skin is drawn as the inside of the mouth in the head (`mouth.gdshader`).
 - Shots: `Director.SHOTS`, `ROTATION`.
 - Look: `River._air` (fog, exposure, sun), `River._water`, `Riverboat` colours.
 

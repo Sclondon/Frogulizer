@@ -55,6 +55,10 @@ const EXPRESSIONS := {
 ## How far the lids turn to close, how far the jaw opens at most.
 const LID_SHUT := 1.05
 const JAW_WIDE := 0.7
+## As it opens the jaw slides forward (and a little down), metres for each of the hinge's turn (its
+## sine): the hinge is behind and above the chin, so turning alone swings the chin back into the
+## throat, which folds up over the open mouth. This keeps the chin where it was and drops the lip.
+const JAW_SLIDE := Vector3(0.0, -0.015, 0.1)
 
 ## What it plays ("" for none: it dances).
 var part := ""
@@ -85,6 +89,7 @@ var _gaze_eyes := Vector2.ZERO    # yaw, pitch the eyes are on (radians, from st
 var _gaze_head := Vector2.ZERO    # and the head
 
 var _jaw: Node3D
+var _jaw_rest := Vector3.ZERO
 ## The soft parts, jiggled on springs as the body moves (`_jiggle`): [bone, its rest, how far it
 ## is off it, how fast it is going, how loose].
 var _jiggles: Array = []
@@ -94,7 +99,7 @@ var _head_lag := Vector3.ZERO
 var _head_lag_going := Vector3.ZERO
 var _lids: Array[Node3D] = []
 var _tongue: Array[Node3D] = []
-var _shapes: Array = []          # [MeshInstance3D, wide, round, frown blend shape indexes]
+var _shapes: Array = []          # [MeshInstance3D, wide, round, frown, gape blend shape indexes]
 ## The materials the face is drawn with (shaders/toon.gdshader's mouth, shaders/eye.gdshader): see `bind_face`.
 var _skin_materials: Array[ShaderMaterial] = []
 var _eye_materials: Array[ShaderMaterial] = [null, null]
@@ -137,6 +142,7 @@ func _ready() -> void:
 	_blink_in = _rng.randf_range(0.5, 4.0)
 	if _has(&"jaw"):
 		_jaw = _joint(_head, &"jaw", _rest(&"jaw"))
+		_jaw_rest = _jaw.position
 		var parent := _jaw
 		for k in 8:
 			var bone := StringName("tongue%d" % k)
@@ -153,7 +159,7 @@ func _ready() -> void:
 			_lids.append(_joint(_head, bone, _rest(bone)))
 	for mesh: MeshInstance3D in _figure.find_children("*", "MeshInstance3D", true, false):
 		if mesh.mesh is ArrayMesh and mesh.find_blend_shape_by_name(&"wide") >= 0:
-			_shapes.append([mesh, mesh.find_blend_shape_by_name(&"wide"), mesh.find_blend_shape_by_name(&"round"), mesh.find_blend_shape_by_name(&"frown")])
+			_shapes.append([mesh, mesh.find_blend_shape_by_name(&"wide"), mesh.find_blend_shape_by_name(&"round"), mesh.find_blend_shape_by_name(&"frown"), mesh.find_blend_shape_by_name(&"gape")])
 	if part != "" and part != "singer":
 		instrument = Instrument.make(part)
 	if instrument:
@@ -490,6 +496,7 @@ func _face_pose(delta: float) -> void:
 		skin.set_shader_parameter(&"smile", _face.wide - _face.frown)
 	if _jaw:
 		_jaw.rotation.x = _face.jaw * JAW_WIDE
+		_jaw.position = _jaw_rest + JAW_SLIDE * sin(_jaw.rotation.x)
 		var throat := 0.0
 		if blowing:
 			throat = Groove.level_of(part) * 0.7 + _hit * 0.5
@@ -501,6 +508,9 @@ func _face_pose(delta: float) -> void:
 		mesh.set_blend_shape_value(shape[1], _face.wide)
 		mesh.set_blend_shape_value(shape[2], _face.round)
 		mesh.set_blend_shape_value(shape[3], _face.frown)
+		# (the upper lip arching as the jaw drops)
+		if shape[4] >= 0:
+			mesh.set_blend_shape_value(shape[4], _face.jaw)
 	_head.rotate_object_local(Vector3.RIGHT, -_face.back)
 	_head.rotate_object_local(Vector3.FORWARD, _face.tilt)
 	_tongue_pose()
