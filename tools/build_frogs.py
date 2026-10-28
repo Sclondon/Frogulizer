@@ -234,7 +234,7 @@ JAWLINE = [(0.178, 0.05, 0.006, -0.018), (0.158, 0.094, 0.006, -0.036), (0.125, 
 JAW_HINGE = Vector((0.0, -0.01, -0.06))
 EYE_CENTRE = Vector((0.08, 0.078, 0.005))
 EYE_WAY = Vector((0.5, 0.1, 0.86)).normalized()
-EYE_RADIUS = 0.025
+EYE_RADIUS = 0.032
 # How far round the eyeball its visible cap reaches from the middle (the rest is under the skin)
 EYE_CAP = math.radians(68.0)
 # How far round (from the middle) the white goes; past it the cap is lid, under the socket's rim
@@ -377,10 +377,10 @@ def skin_mesh():
         # the mound the eye sits in, the socket it sits in, and the rim of its lids round it
         # (big enough to cover the eyeball everywhere but its front: from behind and above only
         # the skin of the mound is seen)
-        field.add(head_shape(tuple(e - way * 0.014), (0.035, 0.033, 0.037)), 0.022)
+        field.add(head_shape(tuple(e - way * 0.018), (0.042, 0.04, 0.044)), 0.022)
         field.cut(sdf.sphere(tuple(head_point(e)), (EYE_RADIUS + 0.002) * HEAD_SIZE), 0.004)
         # (and the brow filled in behind the rim, or the socket's cut leaves a slit along the top)
-        field.add(head_shape(tuple(e - way * 0.012 + Vector((0.0, 0.016, 0.0))), (0.026, 0.014, 0.022)), 0.012)
+        field.add(head_shape(tuple(e - way * 0.015 + Vector((0.0, 0.02, 0.0))), (0.033, 0.018, 0.028)), 0.012)
         field.add(sdf.torus(tuple(head_point(e + way * EYE_RADIUS * 0.6)), tuple(way), EYE_RADIUS * 0.82 * HEAD_SIZE, 0.0055 * HEAD_SIZE), 0.012)
         # a nostril on the snout
         field.cut(sdf.sphere(tuple(head_point(Vector((side * 0.026, 0.066, 0.17)))), 0.0075 * HEAD_SIZE), 0.004)
@@ -1392,7 +1392,9 @@ def add_paleness():
     for i, vert in enumerate(body.data.vertices):
         p = kit.from_blender(vert.co)
         a, d = mouth_at(head_space(p))
-        colours.data[i].color = (paleness(p), min(max(a / 4.0 + 0.5, 0.0), 1.0), min(max((d + 0.03) / 0.08, 0.0), 1.0), lines[i])
+        # (round it without its sign, which the shader does not use: it flips behind the head, and
+        # going between the two the shader found the middle of the mouth there and drew a dot)
+        colours.data[i].color = (paleness(p), min(max(abs(a) / 4.0 + 0.5, 0.0), 1.0), min(max((d + 0.03) / 0.08, 0.0), 1.0), lines[i])
     body.data.color_attributes.active_color_name = "pale"
     body.data.color_attributes.render_color_index = body.data.color_attributes.find("pale")
 
@@ -1419,12 +1421,12 @@ def add_mouth_shapes():
         # (the line bent all along, the middle dipping and rising to the sides: a frog's mouth goes
         # round to the sides of its head, so a curve only at the corners is not seen from in front)
         bend = min(abs(q.x) / 0.15, 1.0) ** 2
-        wide = Vector((side * 0.014 * corner, 0.034 * bend - 0.006, -0.018 * corner)) * m
+        wide = Vector((side * 0.014 * corner, 0.05 * bend - 0.008, -0.018 * corner)) * m
         front = blend(-0.04, 0.06, q.z)
         gather = Vector((-side * 0.4 * max(abs(q.x) - 0.035, 0.0), 0.0, 0.02 * front)) * m * (0.4 + 0.6 * front)
         keys["wide"].data[i].co = vert.co + kit.to_blender(wide * HEAD_SIZE) - kit.to_blender(Vector())
         keys["round"].data[i].co = vert.co + kit.to_blender(gather * HEAD_SIZE) - kit.to_blender(Vector())
-        frown = Vector((0.0, -0.03 * bend + 0.006, 0.004 * corner)) * m
+        frown = Vector((0.0, -0.045 * bend + 0.008, 0.004 * corner)) * m
         keys["frown"].data[i].co = vert.co + kit.to_blender(frown * HEAD_SIZE) - kit.to_blender(Vector())
 
 

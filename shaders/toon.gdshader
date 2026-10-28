@@ -44,7 +44,9 @@ uniform float ambient = 0.6;
 
 void fragment() {
 	vec3 painted = COLOR.rgb;
-	float paler = use_pale * smoothstep(0.42, 0.58, painted.r);
+	// (cut sharply: a wide blend smeared along the long triangles where the skin stretches at a joint)
+	float pale_edge = clamp(fwidth(painted.r), 0.002, 0.08);
+	float paler = use_pale * smoothstep(0.5 - pale_edge, 0.5 + pale_edge, painted.r);
 	vec3 colour = mix(albedo, pale, paler);
 	// (where it is against the mouth comes in the vertex colour's green and blue: tools/build_frogs.py add_paleness)
 	float round_mouth = (painted.g - 0.5) * 4.0;

@@ -474,7 +474,7 @@ func _face_pose(delta: float) -> void:
 			continue
 		var side := 1.0 if k == 0 else -1.0
 		var lid: float = _face["lid_l" if k == 0 else "lid_r"]
-		var down := clampf(0.12 + droop * 0.55 + lid * (0.55 if lid > 0.0 else 0.25), 0.0, 1.0)
+		var down := clampf(0.04 + droop * 0.4 + lid * (0.55 if lid > 0.0 else 0.25), 0.0, 1.0)
 		var into := _blinks[k] / maxf(blink_time, 0.02)
 		var shut := sin(into * PI) if into > 0.0 and into < 1.0 else 0.0
 		eye.set_shader_parameter(&"lid", lerpf(down, 1.0, shut))
