@@ -64,7 +64,7 @@ func _run() -> void:
 	conductor.position = Vector3(0.0, 0.0, 1.8)
 	world.add_child(conductor)
 	conductor.turn_to(PI)
-	var dances := ["bounce", "clap", "wave", "jig", "sway", "watch"]
+	var dances := ["move_charleston", "move_twist", "move_macarena", "move_chicken_dance", "move_salsa", "bounce"]
 	for k in dances.size():
 		var frog := Frog.new()
 		frog.look = FrogLook.random(k + 20)

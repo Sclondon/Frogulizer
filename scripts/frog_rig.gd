@@ -17,7 +17,9 @@ extends CharacterRig
 ##   song (Groove.voice and Groove.vowel make the mouth's shapes) with arms that go out on the
 ##   long notes.
 ## - Dancing (anything else): one of DANCES, each a figure of steps and arm moves that goes round
-##   with the beat, drawn as smooth curves of it so it cannot jitter, bigger the louder the band.
+##   with the beat, drawn as smooth curves of it so it cannot jitter, bigger the louder the band;
+##   or one of MOVES, a dance captured from life (GameCommon's MoveClip, played by CharacterRig in
+##   the frog's own build), laid on the song's beat.
 ##
 ## Over any of them an emote (`emote(name)`: one of EMOTES) plays for a while and gives way again:
 ## a bow with the hat raised, a coy clasp of the hands, a belly laugh, a gasp, a panic with the
@@ -25,6 +27,13 @@ extends CharacterRig
 ## solved again after the hips are moved: `_replant`).
 
 const DANCES := ["bounce", "two_step", "charleston", "sway", "wave", "jig", "shimmy", "strut", "clap", "watch"]
+## Dances captured from life (moves/, GameCommon's): the dance's name, and its clip.
+const MOVES := {
+	"move_charleston": "res://moves/charleston.res", "move_fancy_charleston": "res://moves/fancy_charleston.res",
+	"move_lindy_hop": "res://moves/lindy_hop.res", "move_twist": "res://moves/twist.res", "move_salsa": "res://moves/salsa.res",
+	"move_lambada": "res://moves/lambada.res", "move_macarena": "res://moves/macarena.res",
+	"move_chicken_dance": "res://moves/chicken_dance.res", "move_mickey": "res://moves/mickey.res",
+}
 const EMOTES := ["bow", "coy", "laugh", "shock", "panic", "cheer", "point"]
 ## Faces: jaw open (0..1 of JAW_WIDE), the mouth shapes, each lid (+ more closed, - wide open, on
 ## top of its droop), the tongue out (0..1), and the head tipped (back +, to its left +).
@@ -253,6 +262,24 @@ func _pose_extra(delta: float) -> void:
 	_gaze(delta)
 	_jiggle(delta)
 	_face_pose(delta)
+	_dance_move()
+
+
+## A dance of MOVES: its clip played (by CharacterRig, after this) on the song's beat. Its own beat is
+## taken at whichever of half, as it is or double comes nearest the song's, so it is never far off its
+## own speed; each frog starts it at its own bar. Given way to while walking or emoting.
+func _dance_move() -> void:
+	var path: String = MOVES.get(dance, "") if part == "" else ""
+	if path == "":
+		clip_weight = 0.0
+		return
+	if clip == null or clip.resource_path != path:
+		clip = load(path)
+	clip_weight = _dancing * _still * (1.0 - _emote_amount)
+	var song_beat := 60.0 / maxf(Groove.bpm, 30.0) if Groove.playing else 0.5
+	var each := pow(2.0, roundf(log(song_beat / clip.beat) / log(2.0)))
+	var b := (Groove.beat if Groove.playing else _time * 2.0) + lag + 4.0 * (get_instance_id() % 4)
+	clip_time = clip.first_beat + b * each * clip.beat
 
 
 # --- Jiggle ---

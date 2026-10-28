@@ -292,6 +292,13 @@ var keys: Dictionary = KeyPoses.KEYS
 var keep_raw := false
 var raw_poses: Array[Transform3D] = []
 var clips_now := {}
+## A move captured from life (a MoveClip: a dance, made by tools/import_bvh.gd) played over everything
+## else: `clip_weight` of it (0..1; whoever sets it eases it), `clip_time` seconds into it (it goes round
+## its loop). Each figure does it in its own proportions: the hips, back, head and arms are turned as
+## the clip has them, and the feet put where its feet go (scaled to this figure) by this rig's own legs.
+var clip: MoveClip
+var clip_time := 0.0
+var clip_weight := 0.0
 
 
 ## Something that hangs from the figure and swings behind its movement: a bone
@@ -1108,6 +1115,7 @@ func _process(delta: float) -> void:
 	_hold_gun()
 	_bounce_cap(delta)
 	_pose_extra(delta)
+	_pose_clip()
 	_apply_pose()
 	_apply_keys(gait, idle)
 	# (what he carries goes where his hand is now, not where it was a frame ago)
@@ -3668,6 +3676,61 @@ func _measure() -> void:
 	_forearm = _rest(&"hand_l").length()
 	_arm_rest = atan2(elbow.x, -elbow.y)
 	_leg_scale = (_thigh + _shin) / 0.54
+
+
+## Lays `clip` over the pose, as much as `clip_weight` says (see MoveClip). Its distances are in the
+## dancer's stands (hips above ankles), made this figure's.
+func _pose_clip() -> void:
+	if clip == null or clip.frames < 2 or clip_weight <= 0.001 or _ragdoll or _shoulders.size() < 2:
+		return
+	var w := clampf(clip_weight, 0.0, 1.0)
+	var pose := clip.sample(clip_time)
+	var turns: Dictionary = pose.turns
+	var unit := _hip_height - ANKLE
+	var lift := Vector3(0.0, ANKLE, 0.0)
+	_hips.position = _hips.position.lerp((pose.hips as Vector3) * unit + lift, w)
+	_turn_joint(_hips, turns.hips, w)
+	# (a figure without a chest or a neck takes their turns in the joints it has)
+	if _chest:
+		_turn_joint(_spine, turns.spine, w)
+		_turn_joint(_chest, turns.chest, w)
+	else:
+		_turn_joint(_spine, turns.spine * turns.chest, w)
+	if _neck:
+		_turn_joint(_neck, turns.neck, w)
+		_turn_joint(_head, turns.head, w)
+	else:
+		_turn_joint(_head, turns.neck * turns.head, w)
+	# The arms: the clip's turns are from the arms held out, the joints' from the arms hanging (_apply_pose)
+	for i in 2:
+		var suffix := "_l" if i == 0 else "_r"
+		var rest := Quaternion(Vector3.BACK, (1.0 if i == 0 else -1.0) * _arm_rest)
+		_turn_joint(_shoulders[i], turns["upper_arm" + suffix] * rest, w)
+		_turn_joint(_elbows[i], rest.inverse() * turns["forearm" + suffix] * rest, w)
+		_turn_joint(_hands[i], rest.inverse() * turns["hand" + suffix] * rest, w)
+	# The legs: each ankle where the clip's is, in the hips' space, the knee bent the way the clip's is
+	var hips := _hips.transform.orthonormalized()
+	var into := hips.affine_inverse()
+	for i in 2:
+		var side := 1.0 if i == 0 else -1.0
+		var target: Vector3 = _feet[i].position.lerp(into * ((pose.ankles[i] as Vector3) * unit + lift), w)
+		var turn: Quaternion = hips.basis.get_rotation_quaternion().inverse() * turns["foot" + ("_l" if i == 0 else "_r")]
+		var foot := Basis(_feet[i].basis.orthonormalized().get_rotation_quaternion().slerp(turn, w))
+		var hip := Vector3(side * _hip_width, _hip_drop, 0.0)
+		var down := (target - hip).normalized()
+		var out := into * ((pose.knees[i] as Vector3) * unit + lift) - hip
+		out -= down * out.dot(down)
+		var knee := 0.0
+		if out.length_squared() > 0.0001 and down.length_squared() > 0.5:
+			var ahead := Quaternion(down, Vector3.DOWN) * out.normalized()
+			knee = atan2(ahead.x, ahead.z) * w
+		_solve_leg(i, side, target, foot, knee)
+
+
+## Turns a joint `w` of the way to `turn`, keeping where it is and its size.
+func _turn_joint(joint: Node3D, turn: Quaternion, w: float) -> void:
+	var size := joint.basis.get_scale()
+	joint.basis = Basis(joint.basis.orthonormalized().get_rotation_quaternion().slerp(turn.normalized(), w)) * Basis.from_scale(size)
 
 
 ## Where a bone rests, relative to its parent bone.

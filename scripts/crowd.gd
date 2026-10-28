@@ -73,6 +73,10 @@ func _places() -> Array:
 func _pick_dance(energy: float) -> String:
 	var calm := ["sway", "clap", "watch", "sway", "two_step"]
 	var lively := ["bounce", "two_step", "charleston", "clap", "wave", "jig", "shimmy", "strut"]
+	# (most dance one of the dances captured from life)
+	if _rng.randf() < 0.65:
+		calm = ["move_lambada", "move_salsa", "move_mickey", "sway"]
+		lively = FrogRig.MOVES.keys()
 	var list := lively if _rng.randf() < energy + 0.25 else calm
 	return list[_rng.randi() % list.size()]
 

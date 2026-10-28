@@ -91,7 +91,9 @@ working frogs) and dresses the band.
 
 `scripts/frog_rig.gd` (FrogRig, extends CharacterRig) lays the frog's own business over the boy's rig. It puts the
 hands on an instrument and plays it with each strike. The conductor beats time in the bar's pattern. The crowd dances
-bounce, sway, clap, wave, jig, a partner waltz, or just watches. `scripts/frog.gd` (Frog) is a GameCommon `Figure` on
+real dances captured from life (Charleston, lindy hop, the Twist, salsa, lambada, Macarena, chicken dance...: CMU
+motion capture, made over for the boy's skeleton in Character Studio and played by GameCommon's rig in each frog's
+own build, on the song's beat), or bounces, sways, claps, waves, jigs, waltzes in a couple, or just watches. `scripts/frog.gd` (Frog) is a GameCommon `Figure` on
 the frog model. `scripts/instrument.gd` builds the tuba, trumpet, clarinet, accordion, fiddle and bow, banjo, drum kit
 and baton in code.
 
@@ -111,7 +113,7 @@ and baton in code.
 | `scripts/hud.gd` | The song's title and artist as it starts |
 | `scripts/camera_desk.gd` | The camera desk: all the controls, on a computer or a phone, takes and renders |
 | `scripts/frog*.gd`, `scripts/instrument.gd` | The frogs (above) |
-| GameCommon's | `scripts/character_rig.gd`, `player.gd`, `figure.gd`, `toon.gd`, `settings.gd`, ... and `tools/build_character.py`, `figure_sheets.gd` ... (`godot/character-controller`); `scripts/water.gd` (`godot/water`); `woodland/` (`godot/painted-woodland`) |
+| GameCommon's | `scripts/character_rig.gd`, `player.gd`, `figure.gd`, `toon.gd`, `settings.gd`, ... and `tools/build_character.py`, `figure_sheets.gd`, `import_bvh.gd`, `scripts/move_clip.gd` and the dances in `moves/` ... (`godot/character-controller`); `scripts/water.gd` (`godot/water`); `woodland/` (`godot/painted-woodland`) |
 
 ## Checking it
 

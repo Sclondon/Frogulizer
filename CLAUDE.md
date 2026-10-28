@@ -11,7 +11,9 @@ Read `README.md` first. A music visualiser: a frog band on a riverboat, a dancin
   music for it. The band is driven by analysing the recording (`SongImport`, `SongAnalysis`), not by note data.
 - New anthro frog models whose animation is as good as the Character Studio / Outside boy's, and compatible with it.
   They are built on his skeleton and moved by his `CharacterRig`. Keep them on that contract
-  (`tools/build_figure_template.py`): don't give them clip animations or a skeleton of their own.
+  (`tools/build_figure_template.py`): no skeleton of their own. (An earlier note here said "no clip animations": that
+  was Claude's reading, not the user's. Captured dances are wanted, as long as they work for every figure on the boy's
+  skeleton: GameCommon's `MoveClip`, `moves/`, played by the rig; see `FrogRig.MOVES`.)
 - Reuse GameCommon and the other games before making anything new.
 - **Don't play sound on the user's machine while checking.** Windowed test runs pop a window up; always pass
   `--audio-driver Dummy`.
@@ -37,7 +39,9 @@ Read `README.md` first. A music visualiser: a frog band on a riverboat, a dancin
   Octave errors in tempo (half or double) happen; the instruments follow the hits, not the beat.
 - Band positions: `main.gd` `PLACES`; the instruments' layout is in the frog's model space (`Instrument`, with
   `MOUTH`); hands go to the instrument's `grips`.
-- Dances: `FrogRig._dance`; crowd mix: `Crowd._pick_dance`, `count`, `low_from`.
+- Dances: `FrogRig._dance` (made in code) and `FrogRig.MOVES` (captured from life: GameCommon's `moves/`, CMU motion
+  capture, brought in and made over with Character Studio's `tools/import_bvh.gd`); crowd mix: `Crowd._pick_dance`
+  (about two in three dance a captured one), `count`, `low_from`.
 - Shots: `Director.SHOTS`, `ROTATION`.
 - Look: `River._air` (fog, exposure, sun), `River._water`, `Riverboat` colours.
 
